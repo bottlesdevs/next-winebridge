@@ -1,12 +1,11 @@
-use proto::wine_bridge_server::{WineBridge, WineBridgeServer};
+use bottles_core::proto::{
+    self,
+    wine_bridge_server::{WineBridge, WineBridgeServer},
+};
 use windows::{
     core::{s, PCSTR},
     Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK},
 };
-
-mod proto {
-    tonic::include_proto!("winebridge");
-}
 
 #[derive(Debug, Default)]
 struct WineBridgeService;
