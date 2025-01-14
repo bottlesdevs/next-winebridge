@@ -5,6 +5,12 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
+use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+pub enum ProcessIdentifier {
+    Name(String),
+    PID(u32),
+}
 
 #[derive(Debug, Clone)]
 pub struct Process(PROCESSENTRY32W);
@@ -43,6 +49,12 @@ impl Process {
 
     pub fn priority_class(&self) -> i32 {
         self.0.pcPriClassBase
+    }
+
+    pub fn kill(&self) -> Result<(), Error> {
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, self.pid())? };
+
+        unsafe { TerminateProcess(handle, 0) }
     }
 }
 
