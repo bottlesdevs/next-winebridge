@@ -28,7 +28,7 @@ impl ProcessManager {
                 .iter()
                 .find(|p| p.name().to_lowercase() == name.to_lowercase())
                 .cloned(),
-            ProcessIdentifier::PID(pid) => processes.iter().find(|p| p.pid() == pid).cloned(),
+            ProcessIdentifier::Pid(pid) => processes.iter().find(|p| p.pid() == pid).cloned(),
         }
     }
 

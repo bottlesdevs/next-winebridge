@@ -78,7 +78,7 @@ impl WineBridge for WineBridgeService {
     ) -> Result<tonic::Response<proto::KillProcessResponse>, tonic::Status> {
         let pid = request.get_ref().pid;
         let process = ProcessManager
-            .process(ProcessIdentifier::PID(pid))
+            .process(ProcessIdentifier::Pid(pid))
             .ok_or_else(|| tonic::Status::not_found("Process not found"))?;
 
         process

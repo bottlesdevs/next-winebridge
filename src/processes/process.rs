@@ -11,7 +11,7 @@ use windows::Win32::System::Threading::{
 
 pub enum ProcessIdentifier {
     Name(String),
-    PID(u32),
+    Pid(u32),
 }
 
 #[derive(Default)]
