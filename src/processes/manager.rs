@@ -9,10 +9,10 @@ fn to_wide_string(s: impl AsRef<OsStr>) -> Vec<u16> {
     s.as_ref().encode_wide().chain(Some(0)).collect()
 }
 
-struct ProcessManager;
+pub struct ProcessManager;
 
 impl ProcessManager {
-    fn running_processes(&self) -> Result<Vec<Process>, Error> {
+    pub fn running_processes(&self) -> Result<Vec<Process>, Error> {
         let snapshot = ProcessSnapshot::new()?;
 
         Ok(snapshot.map(|process| process).collect())
@@ -32,7 +32,7 @@ impl ProcessManager {
         }
     }
 
-    fn execute(&self, executable: &Path, args: Vec<String>) -> Result<(), Error> {
+    pub fn execute(&self, executable: &Path, args: Vec<String>) -> Result<(), Error> {
         let mut executable = to_wide_string(executable);
         let mut args = to_wide_string(args.join(" "));
 
