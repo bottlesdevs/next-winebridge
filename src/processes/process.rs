@@ -5,11 +5,25 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+use windows::Win32::System::Threading::{
+    OpenProcess, TerminateProcess, PROCESS_INFORMATION, PROCESS_TERMINATE,
+};
 
 pub enum ProcessIdentifier {
     Name(String),
     PID(u32),
+}
+
+#[derive(Default)]
+pub struct ProcessInfo(pub PROCESS_INFORMATION);
+
+impl Drop for ProcessInfo {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0.hProcess).ok();
+            CloseHandle(self.0.hThread).ok();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
