@@ -1,14 +1,28 @@
 [package]
 name = "bottles-winebridge"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+description.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+readme.workspace = true
 
 [dependencies]
-bottles-core = { git = "https://github.com/bottlesdevs/next-core", features = [
-    "winebridge",
-] }
-tonic = "0.12.3"
-tokio = { version = "1.28.2", features = ["full"] }
+bottles-core = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
 
-# [patch."https://github.com/bottlesdevs/next-core"]
-# bottles-core = { path = "../next-core" }
+[dependencies.windows]
+version = "0.58.0"
+features = [
+    "Data_Xml_Dom",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+]
