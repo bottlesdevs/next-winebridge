@@ -26,6 +26,29 @@ impl Drop for ProcessInfo {
     }
 }
 
+pub enum PriorityClass {
+    Idle = 0x00000040,
+    BelowNormal = 0x00004000,
+    Normal = 0x00000020,
+    AboveNormal = 0x00008000,
+    High = 0x00000080,
+    Realtime = 0x00000100,
+}
+
+impl PriorityClass {
+    fn from(value: i32) -> Self {
+        match value {
+            0x00000040 => PriorityClass::Idle,
+            0x00004000 => PriorityClass::BelowNormal,
+            0x00000020 => PriorityClass::Normal,
+            0x00008000 => PriorityClass::AboveNormal,
+            0x00000080 => PriorityClass::High,
+            0x00000100 => PriorityClass::Realtime,
+            _ => panic!("Invalid priority class"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Process(PROCESSENTRY32W);
 
@@ -61,8 +84,8 @@ impl Process {
         self.0.th32ParentProcessID
     }
 
-    pub fn priority_class(&self) -> i32 {
-        self.0.pcPriClassBase
+    pub fn priority_class(&self) -> PriorityClass {
+        PriorityClass::from(self.0.pcPriClassBase)
     }
 
     pub fn kill(&self) -> Result<(), Error> {
