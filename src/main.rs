@@ -1,4 +1,5 @@
-use bottles_core::{proto::wine_bridge_server::WineBridgeServer, winebridge::WineBridgeService};
+use bottles_core::proto::wine_bridge_server::WineBridgeServer;
+use bottles_winebridge::WineBridgeService;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
