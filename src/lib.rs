@@ -1,3 +1,5 @@
+mod processes;
+
 use bottles_core::proto::{self, wine_bridge_server::WineBridge};
 use windows::{
     core::{s, PCSTR},
