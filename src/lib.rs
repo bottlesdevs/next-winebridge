@@ -1,4 +1,5 @@
 mod processes;
+mod registry;
 
 use bottles_core::proto::{self, wine_bridge_server::WineBridge};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
