@@ -101,3 +101,105 @@ impl RegistryManager {
         hive.inner().open(subkey)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn test_subkey() -> PathBuf {
+        PathBuf::from("Software\\WineBridgeTest")
+    }
+
+    #[test]
+    fn test_create_key() {
+        let hive = Hive::CurrentUser;
+        let subkey = test_subkey();
+        assert!(Key::new(hive, &subkey).is_ok(), "Failed to create key");
+
+        // Check if the key exists
+        let key = hive.inner().open(&subkey.display().to_string());
+        assert!(key.is_ok(), "Failed to open key");
+
+        // Clean up
+        hive.inner()
+            .remove_tree(&subkey.display().to_string())
+            .expect("Failed to delete test key");
+    }
+
+    #[test]
+    fn test_get_key() {
+        let hive = Hive::CurrentUser;
+        let subkey = test_subkey();
+        Key::new(hive, &subkey).expect("Failed to create key");
+
+        // Get the key
+        let key = Key::get(hive, &subkey);
+        assert!(key.is_ok(), "Failed to open key");
+
+        // Clean up
+        hive.inner()
+            .remove_tree(&subkey.display().to_string())
+            .expect("Failed to delete test key");
+    }
+
+    #[test]
+    fn test_delete_key() {
+        let hive = Hive::CurrentUser;
+        let subkey = test_subkey();
+        Key::new(hive, &subkey).expect("Failed to create key");
+
+        // Delete the key
+        Key::delete(hive, &subkey).expect("Failed to delete key");
+
+        // Check if the key is deleted
+        let key = hive.inner().open(&subkey.display().to_string());
+        assert!(key.is_err(), "Key still exists after deletion");
+    }
+
+    #[test]
+    fn test_create_value() {
+        let hive = Hive::CurrentUser;
+        let subkey = test_subkey();
+
+        let key = Key::new(hive, &subkey).expect("Failed to create key");
+
+        // Set values
+        key.create_value("TestDWord", Data::DWord(42))
+            .expect("Failed to set DWord");
+        key.create_value("TestString", Data::String("hello".to_string()))
+            .expect("Failed to set String");
+
+        // Get values
+        let dword = key.get_u32("TestDWord").expect("Failed to get DWord");
+        assert_eq!(dword, 42);
+
+        let string = key.get_string("TestString").expect("Failed to get String");
+        assert_eq!(string, "hello");
+
+        key.remove_value("TestDWord")
+            .expect("Failed to remove DWord");
+        key.remove_value("TestString")
+            .expect("Failed to remove String");
+    }
+
+    #[test]
+    fn test_rename_value() {
+        let hive = Hive::CurrentUser;
+        let subkey = test_subkey();
+        let key = Key::new(hive, &subkey).expect("Failed to open key");
+
+        key.create_value("FromDWord", Data::DWord(42))
+            .expect("Failed to set DWord");
+
+        // Rename value
+        key.rename_value("FromDWord", "ToDWord")
+            .expect("Failed to rename value");
+        let renamed = key.get_u32("ToDWord").expect("Failed to get renamed value");
+        assert_eq!(renamed, 42);
+
+        // Delete value
+        key.remove_value("ToDWord").expect("Failed to delete value");
+        assert!(key.value("ToDWord").is_err());
+    }
+}
