@@ -1,4 +1,5 @@
-use std::path::Path;
+use bottles_core::proto;
+use std::{ops::Deref, path::Path, str::FromStr};
 use windows_registry::*;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -12,15 +13,6 @@ pub enum Data {
     Other,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum Hive {
-    ClassesRoot,
-    CurrentConfig,
-    CurrentUser,
-    LocalMachine,
-    Users,
-}
-
 impl Hive {
     pub fn inner(&self) -> &Key {
         match self {
@@ -31,9 +23,43 @@ impl Hive {
             Hive::Users => USERS,
         }
     }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            Hive::ClassesRoot => "HKCR".to_string(),
+            Hive::CurrentConfig => "HKCC".to_string(),
+            Hive::CurrentUser => "HKCU".to_string(),
+            Hive::LocalMachine => "HKLM".to_string(),
+            Hive::Users => "HKU".to_string(),
+        }
+    }
 }
 
-trait KeyExtension {
+#[derive(Debug, Copy, Clone)]
+pub enum Hive {
+    ClassesRoot,
+    CurrentConfig,
+    CurrentUser,
+    LocalMachine,
+    Users,
+}
+
+impl FromStr for Hive {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "CLASSESROOT" | "HKCR" => Ok(Hive::ClassesRoot),
+            "CURRENTCONFIG" | "HKCC" => Ok(Hive::CurrentConfig),
+            "CURRENTUSER" | "HKCU" => Ok(Hive::CurrentUser),
+            "LOCALMACHINE" | "HKLM" => Ok(Hive::LocalMachine),
+            "USERS" | "HKU" => Ok(Hive::Users),
+            _ => Err("invalid registry hive"),
+        }
+    }
+}
+
+pub trait KeyExtension {
     fn get(hive: Hive, subkey: &Path) -> Result<Key> {
         hive.inner().open(subkey.display().to_string())
     }
@@ -50,9 +76,74 @@ trait KeyExtension {
     fn values(&self) -> Result<Vec<(String, Value)>>;
     fn create_value(&self, name: &str, data: Data) -> Result<()>;
     fn rename_value(&self, old_name: &str, new_name: &str) -> Result<()>;
+
+    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto::RegistryKey;
+}
+
+pub fn to_reg_data(ty: proto::RegistryValueType, data: Vec<u8>) -> Data {
+    match ty {
+        proto::RegistryValueType::RegBinary => Data::Bytes(data),
+        proto::RegistryValueType::RegDword => {
+            let val = u32::from_le_bytes(data.try_into().unwrap());
+            Data::DWord(val)
+        }
+        proto::RegistryValueType::RegQword => {
+            let val = u64::from_le_bytes(data.try_into().unwrap());
+            Data::QWord(val)
+        }
+        proto::RegistryValueType::RegSz => {
+            let val = String::from_utf8(data).unwrap();
+            Data::String(val)
+        }
+        proto::RegistryValueType::RegExpandSz => {
+            let val = String::from_utf8(data).unwrap();
+            Data::ExpandString(val)
+        }
+        proto::RegistryValueType::RegMultiSz => {
+            let val = String::from_utf8(data).unwrap();
+            let strings: Vec<String> = val.split('\0').map(|s| s.to_string()).collect();
+            Data::MultiString(strings)
+        }
+        proto::RegistryValueType::RegNone => Data::Other,
+    }
+}
+
+pub fn to_proto_reg_val(value: Value) -> proto::RegistryValue {
+    let ty = match value.ty() {
+        Type::Bytes => proto::RegistryValueType::RegBinary,
+        Type::U32 => proto::RegistryValueType::RegDword,
+        Type::U64 => proto::RegistryValueType::RegQword,
+        Type::String => proto::RegistryValueType::RegSz,
+        Type::ExpandString => proto::RegistryValueType::RegExpandSz,
+        Type::MultiString => proto::RegistryValueType::RegMultiSz,
+        Type::Other(_) => proto::RegistryValueType::RegNone,
+    };
+
+    let val = value.deref();
+    proto::RegistryValue {
+        r#type: ty as i32,
+        data: val.to_vec(),
+    }
 }
 
 impl KeyExtension for windows_registry::Key {
+    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto::RegistryKey {
+        let values: Vec<proto::RegistryKeyValue> = self
+            .values()
+            .unwrap()
+            .map(|(name, value)| proto::RegistryKeyValue {
+                name,
+                value: Some(to_proto_reg_val(value)),
+            })
+            .collect();
+
+        proto::RegistryKey {
+            hive: hive.to_string(),
+            subkey: subkey.display().to_string(),
+            values,
+        }
+    }
+
     fn value(&self, name: &str) -> Result<Value> {
         let value = self.get_value(name)?;
         Ok(value)
@@ -91,14 +182,22 @@ impl KeyExtension for windows_registry::Key {
 pub struct RegistryManager;
 
 impl RegistryManager {
-    pub fn value(&self, hive: &Hive, subkey: &str, name: &str) -> Result<Value> {
-        let key = hive.inner().open(subkey)?;
+    pub fn value(&self, hive: Hive, subkey: &Path, name: &str) -> Result<Value> {
+        let key = hive.inner().open(subkey.display().to_string())?;
 
         key.value(name)
     }
 
-    pub fn key(&self, hive: &Hive, subkey: &str) -> Result<Key> {
-        hive.inner().open(subkey)
+    pub fn key(&self, hive: Hive, subkey: &Path) -> Result<Key> {
+        hive.inner().open(subkey.display().to_string())
+    }
+
+    pub fn create_key(&self, hive: Hive, subkey: &Path) -> Result<Key> {
+        Key::new(hive, subkey)
+    }
+
+    pub fn delete_key(&self, hive: Hive, subkey: &Path) -> Result<()> {
+        Key::delete(hive, subkey)
     }
 }
 
