@@ -1,1 +1,1 @@
-mod manager;
+pub mod manager;
