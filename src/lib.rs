@@ -3,10 +3,10 @@ mod registry;
 
 use bottles_core::proto::{self, wine_bridge_server::WineBridge};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
-use registry::manager::{to_proto_reg_val, to_reg_data, KeyExtension, RegistryManager};
+use registry::manager::{KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
 use windows::{
-    core::{s, PCSTR},
-    Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK},
+    Win32::UI::WindowsAndMessaging::{MB_OK, MessageBoxA},
+    core::{PCSTR, s},
 };
 use windows_registry::Key;
 
@@ -20,7 +20,7 @@ impl WineBridge for WineBridgeService {
         request: tonic::Request<proto::MessageRequest>,
     ) -> Result<tonic::Response<proto::MessageResponse>, tonic::Status> {
         let request = request.get_ref();
-        println!("Got a request: {:?}", request);
+        tracing::info!("Got a request: {:?}", request);
         let message = request.message.as_str();
         let c_message = std::ffi::CString::new(message).unwrap();
         unsafe {
