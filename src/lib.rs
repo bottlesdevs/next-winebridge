@@ -8,7 +8,6 @@ use windows::{
     Win32::UI::WindowsAndMessaging::{MB_OK, MessageBoxA},
     core::{PCSTR, s},
 };
-use windows_registry::Key;
 
 #[derive(Debug, Default)]
 pub struct WineBridgeService;

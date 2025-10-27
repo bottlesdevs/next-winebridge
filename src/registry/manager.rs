@@ -59,6 +59,7 @@ impl FromStr for Hive {
     }
 }
 
+#[allow(dead_code)]
 pub trait KeyExtension {
     fn get(hive: Hive, subkey: &Path) -> Result<Key> {
         hive.inner().open(subkey.display().to_string())
@@ -181,6 +182,7 @@ impl KeyExtension for windows_registry::Key {
 
 pub struct RegistryManager;
 
+#[allow(dead_code)]
 impl RegistryManager {
     pub fn value(&self, hive: Hive, subkey: &Path, name: &str) -> Result<Value> {
         let key = hive.inner().open(subkey.display().to_string())?;
