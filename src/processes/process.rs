@@ -1,14 +1,15 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use windows::core::Error;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, TerminateProcess, PROCESS_INFORMATION, PROCESS_TERMINATE,
+    OpenProcess, PROCESS_INFORMATION, PROCESS_TERMINATE, TerminateProcess,
 };
+use windows::core::Error;
 
+#[allow(dead_code)]
 pub enum ProcessIdentifier {
     Name(String),
     Pid(u32),
@@ -26,6 +27,7 @@ impl Drop for ProcessInfo {
     }
 }
 
+#[allow(dead_code)]
 pub enum PriorityClass {
     Idle = 0x00000040,
     BelowNormal = 0x00004000,
@@ -35,6 +37,7 @@ pub enum PriorityClass {
     Realtime = 0x00000100,
 }
 
+#[allow(dead_code)]
 impl PriorityClass {
     fn from(value: i32) -> Self {
         match value {
@@ -58,6 +61,7 @@ impl From<PROCESSENTRY32W> for Process {
     }
 }
 
+#[allow(dead_code)]
 impl Process {
     pub fn name(&self) -> String {
         let len = self
