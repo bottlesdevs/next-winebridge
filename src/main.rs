@@ -1,6 +1,7 @@
-use bottles_core::proto::wine_bridge_server::WineBridgeServer;
+use bottles_core::proto::winebridge::wine_bridge_server::WineBridgeServer;
 use bottles_winebridge::WineBridgeService;
 use tracing_subscriber::EnvFilter;
+use tokio::sync::broadcast;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,11 +13,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let addr = "[::1]:50051".parse().unwrap();
-    let service = WineBridgeService::default();
-    tracing::info!("Listening on {}", addr);
+    let (tx, mut rx) = broadcast::channel(1);
+    
+    let service = WineBridgeService::new(tx);
+    tracing::info!("WineBridge Agent listening on {}", addr);
+    
     tonic::transport::Server::builder()
         .add_service(WineBridgeServer::new(service))
-        .serve(addr)
+        .serve_with_shutdown(addr, async {
+            rx.recv().await.ok();
+            tracing::info!("Shutting down WineBridge Agent...");
+        })
         .await?;
     Ok(())
 }
