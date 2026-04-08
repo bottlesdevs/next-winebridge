@@ -1,12 +1,28 @@
+mod dll_overrides;
 mod processes;
 mod registry;
+mod services;
 
 use bottles_core::proto::winebridge::{self, wine_bridge_server::WineBridge};
+use dll_overrides::manager::{DllOverrideManager, OverrideMode};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
 use registry::manager::{KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
+use services::manager::ServiceManager;
+use std::ffi::OsString;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status};
+use windows::Win32::Storage::FileSystem::{
+    GetDiskFreeSpaceExW, GetLogicalDrives, GetVolumeInformationW,
+};
+use windows::Win32::System::Threading::{CreateProcessW, CREATE_NEW_CONSOLE, STARTUPINFOW};
+use windows::Win32::Foundation::CloseHandle;
+use windows::core::PCWSTR;
+
+fn to_wide(s: &str) -> Vec<u16> {
+    OsString::from(s).encode_wide().chain(Some(0)).collect()
+}
 
 pub struct WineBridgeService {
     shutdown_signal: broadcast::Sender<()>,
@@ -27,7 +43,7 @@ impl WineBridge for WineBridgeService {
         let _ = request;
         Ok(Response::new(winebridge::MessageResponse {
             success: true,
-            error: String::new(),
+            error: None,
         }))
     }
 
@@ -101,7 +117,7 @@ impl WineBridge for WineBridgeService {
         let subkey = Path::new(&input.subkey);
 
         RegistryManager.create_key(hive, subkey)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: String::new() }))
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -114,7 +130,7 @@ impl WineBridge for WineBridgeService {
         let subkey = Path::new(&input.subkey);
 
         RegistryManager.delete_key(hive, subkey)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: String::new() }))
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -165,7 +181,7 @@ impl WineBridge for WineBridgeService {
         let value = input.value.as_ref().ok_or(Status::invalid_argument("Missing value"))?;
         
         key.create_value(&key_req.name, to_reg_data(value.r#type(), value.data.clone()))
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: String::new() }))
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -180,7 +196,7 @@ impl WineBridge for WineBridgeService {
         RegistryManager.key(hive, subkey)
             .map_err(|e| Status::internal(format!("{:?}", e)))?
             .remove_value(&input.name)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: String::new() }))
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -241,7 +257,8 @@ impl WineBridge for WineBridgeService {
         &self,
         request: Request<winebridge::FileOperationRequest>,
     ) -> Result<Response<winebridge::ExistsResponse>, Status> {
-        let path = Path::new(&request.into_inner().path);
+        let inner = request.into_inner();
+        let path = Path::new(&inner.path);
         Ok(Response::new(winebridge::ExistsResponse {
             exists: path.exists(),
             is_dir: path.is_dir(),
@@ -270,6 +287,147 @@ impl WineBridge for WineBridgeService {
         Ok(Response::new(winebridge::ListDirectoryResponse { files }))
     }
 
+    // --- Service Management ---
+
+    async fn list_services(
+        &self,
+        _request: Request<winebridge::ListServicesRequest>,
+    ) -> Result<Response<winebridge::ListServicesResponse>, Status> {
+        let services = ServiceManager
+            .list_services()
+            .map_err(|e| Status::internal(format!("Failed to list services: {:?}", e)))?;
+
+        let services = services
+            .into_iter()
+            .map(|s| winebridge::ServiceInfo {
+                name: s.name,
+                display_name: s.display_name,
+                state: s.state as i32,
+                start_type: s.start_type as i32,
+            })
+            .collect();
+
+        Ok(Response::new(winebridge::ListServicesResponse { services }))
+    }
+
+    async fn get_service_status(
+        &self,
+        request: Request<winebridge::ServiceRequest>,
+    ) -> Result<Response<winebridge::ServiceStatusResponse>, Status> {
+        let name = request.into_inner().name;
+        let state = ServiceManager
+            .get_status(&name)
+            .map_err(|e| Status::internal(format!("Failed to get service status: {:?}", e)))?;
+
+        Ok(Response::new(winebridge::ServiceStatusResponse {
+            name,
+            state: state as i32,
+        }))
+    }
+
+    async fn start_service(
+        &self,
+        request: Request<winebridge::ServiceRequest>,
+    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+        let name = request.into_inner().name;
+        ServiceManager
+            .start(&name)
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to start service: {:?}", e)))
+    }
+
+    async fn stop_service(
+        &self,
+        request: Request<winebridge::ServiceRequest>,
+    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+        let name = request.into_inner().name;
+        ServiceManager
+            .stop(&name)
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to stop service: {:?}", e)))
+    }
+
+    async fn create_service(
+        &self,
+        request: Request<winebridge::CreateServiceRequest>,
+    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+        let input = request.into_inner();
+        ServiceManager
+            .create(&input.name, &input.display_name, &input.binary_path, input.start_type as u32)
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to create service: {:?}", e)))
+    }
+
+    async fn delete_service(
+        &self,
+        request: Request<winebridge::ServiceRequest>,
+    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+        let name = request.into_inner().name;
+        ServiceManager
+            .delete(&name)
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to delete service: {:?}", e)))
+    }
+
+    // --- DLL Overrides ---
+
+    async fn list_dll_overrides(
+        &self,
+        _request: Request<winebridge::ListDllOverridesRequest>,
+    ) -> Result<Response<winebridge::ListDllOverridesResponse>, Status> {
+        let overrides = DllOverrideManager
+            .list()
+            .map_err(|e| Status::internal(format!("Failed to list DLL overrides: {:?}", e)))?;
+
+        let overrides = overrides
+            .into_iter()
+            .map(|o| winebridge::DllOverride {
+                dll: o.dll,
+                mode: o.mode.to_proto_i32(),
+            })
+            .collect();
+
+        Ok(Response::new(winebridge::ListDllOverridesResponse { overrides }))
+    }
+
+    async fn get_dll_override(
+        &self,
+        request: Request<winebridge::DllOverrideRequest>,
+    ) -> Result<Response<winebridge::DllOverrideResponse>, Status> {
+        let dll = request.into_inner().dll;
+        let entry = DllOverrideManager
+            .get(&dll)
+            .map_err(|e| Status::internal(format!("Failed to get DLL override: {:?}", e)))?;
+
+        Ok(Response::new(winebridge::DllOverrideResponse {
+            dll: entry.dll,
+            mode: entry.mode.to_proto_i32(),
+        }))
+    }
+
+    async fn set_dll_override(
+        &self,
+        request: Request<winebridge::SetDllOverrideRequest>,
+    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+        let input = request.into_inner();
+        let mode = OverrideMode::from_proto_i32(input.mode);
+        DllOverrideManager
+            .set(&input.dll, mode)
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to set DLL override: {:?}", e)))
+    }
+
+    async fn delete_dll_override(
+        &self,
+        request: Request<winebridge::DllOverrideRequest>,
+    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+        let dll = request.into_inner().dll;
+        DllOverrideManager
+            .delete(&dll)
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to delete DLL override: {:?}", e)))
+    }
+
     // --- System ---
 
     async fn shutdown(
@@ -277,29 +435,108 @@ impl WineBridge for WineBridgeService {
         _request: Request<winebridge::ShutdownRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let _ = self.shutdown_signal.send(());
-        Ok(Response::new(winebridge::MessageResponse { success: true, error: String::new() }))
+        Ok(Response::new(winebridge::MessageResponse { success: true, error: None }))
     }
 
     async fn wineboot(
         &self,
         request: Request<winebridge::WinebootRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
-        // Mock implementation relying on external wineboot or just killing processes
-        // In a real scenario, this would execute 'wineboot.exe'
-        let _req = request.into_inner();
-        // TODO: Execute wineboot
-        Ok(Response::new(winebridge::MessageResponse { success: true, error: String::new() }))
+        let mode = request.into_inner().mode;
+
+        let args = match mode {
+            1 => "/s",
+            2 => "/k",
+            _ => "/r",
+        };
+
+        let exe = to_wide("wineboot.exe");
+        let mut cmd = to_wide(&format!("wineboot.exe {}", args));
+        let mut startup_info = STARTUPINFOW::default();
+        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let mut process_info = windows::Win32::System::Threading::PROCESS_INFORMATION::default();
+
+        let result = unsafe {
+            CreateProcessW(
+                PCWSTR(exe.as_ptr()),
+                Some(windows::core::PWSTR(cmd.as_mut_ptr())),
+                None,
+                None,
+                false,
+                CREATE_NEW_CONSOLE,
+                None,
+                PCWSTR::null(),
+                &mut startup_info,
+                &mut process_info,
+            )
+        };
+
+        unsafe {
+            CloseHandle(process_info.hProcess).ok();
+            CloseHandle(process_info.hThread).ok();
+        }
+
+        result
+            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map_err(|e| Status::internal(format!("Failed to execute wineboot: {:?}", e)))
     }
 
     async fn get_drive_info(
         &self,
         _request: Request<winebridge::DriveInfoRequest>,
     ) -> Result<Response<winebridge::DriveInfoResponse>, Status> {
-         // Mock implementation
-         let drives = vec![
-             winebridge::Drive { letter: "C".to_string(), label: "System".to_string(), total_space: 1000, free_space: 500 },
-             winebridge::Drive { letter: "Z".to_string(), label: "Root".to_string(), total_space: 2000, free_space: 1000 },
-         ];
-         Ok(Response::new(winebridge::DriveInfoResponse { drives }))
+        let bitmask = unsafe { GetLogicalDrives() };
+        let mut drives = Vec::new();
+
+        for i in 0u32..26 {
+            if bitmask & (1 << i) == 0 {
+                continue;
+            }
+
+            let letter = (b'A' + i as u8) as char;
+            let root = to_wide(&format!("{}:\\", letter));
+
+            let mut label_buf = vec![0u16; 256];
+            let mut fs_buf = vec![0u16; 256];
+
+            unsafe {
+                GetVolumeInformationW(
+                    PCWSTR(root.as_ptr()),
+                    Some(&mut label_buf),
+                    None,
+                    None,
+                    None,
+                    Some(&mut fs_buf),
+                )
+                .ok();
+            }
+
+            let label_len = label_buf.iter().position(|&c| c == 0).unwrap_or(0);
+            let label = OsString::from_wide(&label_buf[..label_len])
+                .to_string_lossy()
+                .into_owned();
+
+            let mut free_bytes: u64 = 0;
+            let mut total_bytes: u64 = 0;
+
+            unsafe {
+                GetDiskFreeSpaceExW(
+                    PCWSTR(root.as_ptr()),
+                    Some(&mut free_bytes as *mut u64 as *mut _),
+                    Some(&mut total_bytes as *mut u64 as *mut _),
+                    None,
+                )
+                .ok();
+            }
+
+            drives.push(winebridge::Drive {
+                letter: letter.to_string(),
+                label,
+                total_space: total_bytes,
+                free_space: free_bytes,
+            });
+        }
+
+        Ok(Response::new(winebridge::DriveInfoResponse { drives }))
     }
 }
