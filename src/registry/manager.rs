@@ -1,4 +1,4 @@
-use bottles_core::proto;
+use bottles_core::proto::winebridge as proto_winebridge;
 use std::{ops::Deref, path::Path, str::FromStr};
 use windows_registry::*;
 
@@ -78,67 +78,67 @@ pub trait KeyExtension {
     fn create_value(&self, name: &str, data: Data) -> Result<()>;
     fn rename_value(&self, old_name: &str, new_name: &str) -> Result<()>;
 
-    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto::RegistryKey;
+    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto_winebridge::RegistryKey;
 }
 
-pub fn to_reg_data(ty: proto::RegistryValueType, data: Vec<u8>) -> Data {
+pub fn to_reg_data(ty: proto_winebridge::RegistryValueType, data: Vec<u8>) -> Data {
     match ty {
-        proto::RegistryValueType::RegBinary => Data::Bytes(data),
-        proto::RegistryValueType::RegDword => {
+        proto_winebridge::RegistryValueType::RegBinary => Data::Bytes(data),
+        proto_winebridge::RegistryValueType::RegDword => {
             let val = u32::from_le_bytes(data.try_into().unwrap());
             Data::DWord(val)
         }
-        proto::RegistryValueType::RegQword => {
+        proto_winebridge::RegistryValueType::RegQword => {
             let val = u64::from_le_bytes(data.try_into().unwrap());
             Data::QWord(val)
         }
-        proto::RegistryValueType::RegSz => {
+        proto_winebridge::RegistryValueType::RegSz => {
             let val = String::from_utf8(data).unwrap();
             Data::String(val)
         }
-        proto::RegistryValueType::RegExpandSz => {
+        proto_winebridge::RegistryValueType::RegExpandSz => {
             let val = String::from_utf8(data).unwrap();
             Data::ExpandString(val)
         }
-        proto::RegistryValueType::RegMultiSz => {
+        proto_winebridge::RegistryValueType::RegMultiSz => {
             let val = String::from_utf8(data).unwrap();
             let strings: Vec<String> = val.split('\0').map(|s| s.to_string()).collect();
             Data::MultiString(strings)
         }
-        proto::RegistryValueType::RegNone => Data::Other,
+        proto_winebridge::RegistryValueType::RegNone => Data::Other,
     }
 }
 
-pub fn to_proto_reg_val(value: Value) -> proto::RegistryValue {
+pub fn to_proto_reg_val(value: Value) -> proto_winebridge::RegistryValue {
     let ty = match value.ty() {
-        Type::Bytes => proto::RegistryValueType::RegBinary,
-        Type::U32 => proto::RegistryValueType::RegDword,
-        Type::U64 => proto::RegistryValueType::RegQword,
-        Type::String => proto::RegistryValueType::RegSz,
-        Type::ExpandString => proto::RegistryValueType::RegExpandSz,
-        Type::MultiString => proto::RegistryValueType::RegMultiSz,
-        Type::Other(_) => proto::RegistryValueType::RegNone,
+        Type::Bytes => proto_winebridge::RegistryValueType::RegBinary,
+        Type::U32 => proto_winebridge::RegistryValueType::RegDword,
+        Type::U64 => proto_winebridge::RegistryValueType::RegQword,
+        Type::String => proto_winebridge::RegistryValueType::RegSz,
+        Type::ExpandString => proto_winebridge::RegistryValueType::RegExpandSz,
+        Type::MultiString => proto_winebridge::RegistryValueType::RegMultiSz,
+        Type::Other(_) => proto_winebridge::RegistryValueType::RegNone,
     };
 
     let val = value.deref();
-    proto::RegistryValue {
+    proto_winebridge::RegistryValue {
         r#type: ty as i32,
         data: val.to_vec(),
     }
 }
 
 impl KeyExtension for windows_registry::Key {
-    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto::RegistryKey {
-        let values: Vec<proto::RegistryKeyValue> = self
+    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto_winebridge::RegistryKey {
+        let values: Vec<proto_winebridge::RegistryKeyValue> = self
             .values()
             .unwrap()
-            .map(|(name, value)| proto::RegistryKeyValue {
+            .map(|(name, value)| proto_winebridge::RegistryKeyValue {
                 name,
                 value: Some(to_proto_reg_val(value)),
             })
             .collect();
 
-        proto::RegistryKey {
+        proto_winebridge::RegistryKey {
             hive: hive.to_string(),
             subkey: subkey.display().to_string(),
             values,
