@@ -3,7 +3,7 @@ mod processes;
 mod registry;
 mod services;
 
-use bottles_core::proto::winebridge::{self, wine_bridge_server::WineBridge};
+use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::{DllOverrideManager, OverrideMode};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
 use registry::manager::{KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
@@ -13,11 +13,11 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 use tokio::sync::broadcast;
 use tonic::{Request, Response, Status};
+use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetLogicalDrives, GetVolumeInformationW,
 };
-use windows::Win32::System::Threading::{CreateProcessW, CREATE_NEW_CONSOLE, STARTUPINFOW};
-use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::System::Threading::{CREATE_NEW_CONSOLE, CreateProcessW, STARTUPINFOW};
 use windows::core::PCWSTR;
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -36,6 +36,13 @@ impl WineBridgeService {
 
 #[tonic::async_trait]
 impl WineBridge for WineBridgeService {
+    async fn health(
+        &self,
+        _request: Request<winebridge::BridgeHealthRequest>,
+    ) -> Result<Response<winebridge::BridgeHealthResponse>, Status> {
+        Ok(Response::new(winebridge::BridgeHealthResponse { ok: true }))
+    }
+
     async fn message(
         &self,
         request: Request<winebridge::MessageRequest>,
@@ -53,9 +60,9 @@ impl WineBridge for WineBridgeService {
         &self,
         _request: Request<winebridge::RunningProcessesRequest>,
     ) -> Result<Response<winebridge::RunningProcessesResponse>, Status> {
-        let processes = ProcessManager.running_processes().map_err(|e| {
-            Status::internal(format!("Failed to get running processes: {:?}", e))
-        })?;
+        let processes = ProcessManager
+            .running_processes()
+            .map_err(|e| Status::internal(format!("Failed to get running processes: {:?}", e)))?;
 
         let processes = processes
             .iter()
@@ -75,19 +82,11 @@ impl WineBridge for WineBridgeService {
         &self,
         request: Request<winebridge::CreateProcessRequest>,
     ) -> Result<Response<winebridge::CreateProcessResponse>, Status> {
-        let input = request.into_inner();
-        let program = std::path::Path::new(&input.command);
-        let args = input.args;
-        
-        // TODO: Handle work_dir and env from input
-        
-        ProcessManager
-            .execute(program, args)
+        let pid = ProcessManager
+            .execute(request.into_inner())
             .map_err(|e| Status::internal(format!("Failed to execute process: {:?}", e)))?;
 
-        Ok(Response::new(winebridge::CreateProcessResponse {
-            pid: 0, // TODO: Return real PID
-        }))
+        Ok(Response::new(winebridge::CreateProcessResponse { pid }))
     }
 
     async fn kill_process(
