@@ -1,8 +1,11 @@
 use super::process::{Process, ProcessIdentifier, ProcessInfo, ProcessSnapshot};
-use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::Path};
+use bottles_core::proto as winebridge;
+use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::PathBuf};
 use windows::{
+    Win32::System::Threading::{
+        CREATE_NEW_CONSOLE, CreateProcessW, PROCESS_CREATION_FLAGS, STARTUPINFOW,
+    },
     core::{Error, PCWSTR, PWSTR},
-    Win32::System::Threading::{CreateProcessW, CREATE_NEW_CONSOLE, STARTUPINFOW},
 };
 
 fn to_wide_string(s: impl AsRef<OsStr>) -> Vec<u16> {
@@ -32,9 +35,26 @@ impl ProcessManager {
         }
     }
 
-    pub fn execute(&self, executable: &Path, args: Vec<String>) -> Result<(), Error> {
-        let mut executable = to_wide_string(executable);
-        let mut args = to_wide_string(args.join(" "));
+    pub fn execute(&self, request: winebridge::CreateProcessRequest) -> Result<u32, Error> {
+        let executable = PathBuf::from(request.command);
+        let command_line = std::iter::once(executable.display().to_string())
+            .chain(request.args)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let executable_w = to_wide_string(executable.as_os_str());
+        let mut command_line = to_wide_string(command_line);
+        let work_dir = (!request.work_dir.is_empty()).then(|| to_wide_string(request.work_dir));
+        let current_dir = work_dir
+            .as_ref()
+            .map(|dir| PCWSTR(dir.as_ptr()))
+            .unwrap_or_else(PCWSTR::null);
+
+        let flags = if request.terminal {
+            CREATE_NEW_CONSOLE
+        } else {
+            PROCESS_CREATION_FLAGS(0)
+        };
 
         let mut startup_info = STARTUPINFOW::default();
         startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
@@ -42,17 +62,19 @@ impl ProcessManager {
 
         unsafe {
             CreateProcessW(
-                PCWSTR(executable.as_mut_ptr()),
-                Some(PWSTR(args.as_mut_ptr())),
+                PCWSTR(executable_w.as_ptr()),
+                Some(PWSTR(command_line.as_mut_ptr())),
                 None,
                 None,
                 false,
-                CREATE_NEW_CONSOLE,
+                flags,
                 None,
-                PCWSTR::null(),
+                current_dir,
                 &mut startup_info,
                 &mut process_info.0,
-            )
+            )?;
         }
+
+        Ok(process_info.0.dwProcessId)
     }
 }
