@@ -44,10 +44,9 @@ impl ProcessManager {
 
         let executable_w = to_wide_string(executable.as_os_str());
         let mut command_line = to_wide_string(command_line);
-        let work_dir = (!request.work_dir.is_empty()).then(|| to_wide_string(request.work_dir));
-        let current_dir = work_dir
-            .as_ref()
-            .map(|dir| PCWSTR(dir.as_ptr()))
+        let work_dir = request
+            .work_dir
+            .map(|work_dir| PCWSTR(to_wide_string(work_dir).as_ptr()))
             .unwrap_or_else(PCWSTR::null);
 
         let flags = if request.terminal {
@@ -69,7 +68,7 @@ impl ProcessManager {
                 false,
                 flags,
                 None,
-                current_dir,
+                work_dir,
                 &mut startup_info,
                 &mut process_info.0,
             )?;
