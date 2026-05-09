@@ -1,4 +1,4 @@
-use bottles_core::proto::winebridge as proto_winebridge;
+use bottles_core::proto as proto_winebridge;
 use std::{ops::Deref, path::Path, str::FromStr};
 use windows_registry::*;
 
