@@ -1,7 +1,9 @@
+use std::any::Any;
+
 use bottles_core::proto::wine_bridge_server::WineBridgeServer;
 use bottles_winebridge::WineBridgeService;
+use tokio::sync::oneshot::{self, error::TryRecvError};
 use tracing_subscriber::EnvFilter;
-use tokio::sync::broadcast;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,16 +14,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let addr = "[::1]:50051".parse().unwrap();
-    let (tx, mut rx) = broadcast::channel(1);
-    
+    let host = std::env::var("WINEBRIDGE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port: u16 = std::env::var("WINEBRIDGE_PORT")
+        .unwrap_or_else(|_| "50051".to_string())
+        .parse()?;
+    let addr = format!("{host}:{port}").parse().unwrap();
+
+    let (tx, mut rx) = oneshot::channel();
+
     let service = WineBridgeService::new(tx);
     tracing::info!("WineBridge Agent listening on {}", addr);
-    
+
     tonic::transport::Server::builder()
         .add_service(WineBridgeServer::new(service))
         .serve_with_shutdown(addr, async {
-            rx.recv().await.ok();
+            loop {
+                match rx.try_recv() {
+                    Ok(_) => break,
+                    Err(TryRecvError::Closed) => {
+                        panic!("Shutdown channel closed without sending a signal")
+                    }
+                    Err(TryRecvError::Empty) => {}
+                }
+            }
             tracing::info!("Shutting down WineBridge Agent...");
         })
         .await?;

@@ -11,7 +11,7 @@ use services::manager::ServiceManager;
 use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, oneshot};
 use tonic::{Request, Response, Status};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
@@ -25,12 +25,14 @@ fn to_wide(s: &str) -> Vec<u16> {
 }
 
 pub struct WineBridgeService {
-    shutdown_signal: broadcast::Sender<()>,
+    shutdown_signal: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 impl WineBridgeService {
-    pub fn new(shutdown_signal: broadcast::Sender<()>) -> Self {
-        Self { shutdown_signal }
+    pub fn new(shutdown_signal: oneshot::Sender<()>) -> Self {
+        Self { 
+            shutdown_signal: Mutex::new(Some(shutdown_signal))
+        }
     }
 }
 
@@ -433,8 +435,16 @@ impl WineBridge for WineBridgeService {
         &self,
         _request: Request<winebridge::ShutdownRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
-        let _ = self.shutdown_signal.send(());
-        Ok(Response::new(winebridge::MessageResponse { success: true, error: None }))
+        if let Some(tx) = self.shutdown_signal.lock().await.take() {
+            let _ = tx
+                .send(())
+                .map_err(|_| Status::internal("Failed to send shutdown signal"))?;
+        }
+
+        Ok(Response::new(winebridge::MessageResponse {
+            success: true,
+            error: None,
+        }))
     }
 
     async fn wineboot(
