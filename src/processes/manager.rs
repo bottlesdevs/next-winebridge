@@ -18,7 +18,7 @@ impl ProcessManager {
     pub fn running_processes(&self) -> Result<Vec<Process>, Error> {
         let snapshot = ProcessSnapshot::new()?;
 
-        Ok(snapshot.map(|process| process).collect())
+        Ok(snapshot.collect())
     }
 
     pub fn process(&self, identifier: ProcessIdentifier) -> Option<Process> {
@@ -55,8 +55,10 @@ impl ProcessManager {
             PROCESS_CREATION_FLAGS(0)
         };
 
-        let mut startup_info = STARTUPINFOW::default();
-        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let startup_info = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            ..Default::default()
+        };
         let mut process_info = ProcessInfo::default();
 
         unsafe {
@@ -69,7 +71,7 @@ impl ProcessManager {
                 flags,
                 None,
                 work_dir,
-                &mut startup_info,
+                &startup_info,
                 &mut process_info.0,
             )?;
         }

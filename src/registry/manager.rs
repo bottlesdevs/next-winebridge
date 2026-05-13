@@ -23,16 +23,6 @@ impl Hive {
             Hive::Users => USERS,
         }
     }
-
-    pub fn to_string(&self) -> String {
-        match self {
-            Hive::ClassesRoot => "HKCR".to_string(),
-            Hive::CurrentConfig => "HKCC".to_string(),
-            Hive::CurrentUser => "HKCU".to_string(),
-            Hive::LocalMachine => "HKLM".to_string(),
-            Hive::Users => "HKU".to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -42,6 +32,20 @@ pub enum Hive {
     CurrentUser,
     LocalMachine,
     Users,
+}
+
+impl std::fmt::Display for Hive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let disp = match self {
+            Hive::ClassesRoot => "HKCR",
+            Hive::CurrentConfig => "HKCC",
+            Hive::CurrentUser => "HKCU",
+            Hive::LocalMachine => "HKLM",
+            Hive::Users => "HKU",
+        };
+
+        write!(f, "{}", disp)
+    }
 }
 
 impl FromStr for Hive {
