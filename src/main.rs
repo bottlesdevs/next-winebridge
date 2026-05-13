@@ -1,4 +1,3 @@
-use std::any::Any;
 
 use bottles_core::proto::wine_bridge_server::WineBridgeServer;
 use bottles_winebridge::WineBridgeService;

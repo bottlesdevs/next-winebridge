@@ -119,8 +119,10 @@ impl Iterator for ProcessSnapshot {
     type Item = Process;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut entry = PROCESSENTRY32W::default();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
 
         if !self.initialized {
             unsafe { Process32FirstW(self.handle, &mut entry) }.ok()?;

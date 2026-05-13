@@ -30,8 +30,8 @@ pub struct WineBridgeService {
 
 impl WineBridgeService {
     pub fn new(shutdown_signal: oneshot::Sender<()>) -> Self {
-        Self { 
-            shutdown_signal: Mutex::new(Some(shutdown_signal))
+        Self {
+            shutdown_signal: Mutex::new(Some(shutdown_signal)),
         }
     }
 }
@@ -104,7 +104,9 @@ impl WineBridge for WineBridgeService {
             .kill()
             .map_err(|e| Status::internal(format!("Failed to kill process: {:?}", e)))?;
 
-        Ok(Response::new(winebridge::KillProcessResponse { success: true }))
+        Ok(Response::new(winebridge::KillProcessResponse {
+            success: true,
+        }))
     }
 
     // --- Registry Management ---
@@ -114,11 +116,20 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::CreateRegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let hive = input.hive.parse().map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = input
+            .hive
+            .parse()
+            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
         let subkey = Path::new(&input.subkey);
 
-        RegistryManager.create_key(hive, subkey)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+        RegistryManager
+            .create_key(hive, subkey)
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -127,11 +138,20 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::DeleteRegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let hive = input.hive.parse().map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = input
+            .hive
+            .parse()
+            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
         let subkey = Path::new(&input.subkey);
 
-        RegistryManager.delete_key(hive, subkey)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+        RegistryManager
+            .delete_key(hive, subkey)
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -140,10 +160,14 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::GetRegistryKeyRequest>,
     ) -> Result<Response<winebridge::RegistryKey>, Status> {
         let input = request.get_ref();
-        let hive = input.hive.parse().map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = input
+            .hive
+            .parse()
+            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
         let subkey = Path::new(&input.subkey);
 
-        let key = RegistryManager.key(hive, subkey)
+        let key = RegistryManager
+            .key(hive, subkey)
             .map_err(|e| Status::internal(format!("{:?}", e)))?
             .as_registry_key(hive, subkey);
 
@@ -155,13 +179,18 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<winebridge::RegistryValue>, Status> {
         let input = request.get_ref();
-        let hive = input.hive.parse().map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = input
+            .hive
+            .parse()
+            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
         let subkey = Path::new(&input.subkey);
 
-        let key = RegistryManager.key(hive, subkey)
+        let key = RegistryManager
+            .key(hive, subkey)
             .map_err(|e| Status::internal(format!("{:?}", e)))?;
-            
-        let value = key.value(&input.name)
+
+        let value = key
+            .value(&input.name)
             .map_err(|e| Status::internal(format!("{:?}", e)))?;
 
         Ok(Response::new(to_proto_reg_val(value)))
@@ -172,18 +201,36 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::SetRegistryKeyValueRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let key_req = input.key.as_ref().ok_or(Status::invalid_argument("Missing key"))?;
-        let hive = key_req.hive.parse().map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let key_req = input
+            .key
+            .as_ref()
+            .ok_or(Status::invalid_argument("Missing key"))?;
+        let hive = key_req
+            .hive
+            .parse()
+            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
         let subkey = Path::new(&key_req.subkey);
-        
-        let key = RegistryManager.key(hive, subkey)
+
+        let key = RegistryManager
+            .key(hive, subkey)
             .map_err(|e| Status::internal(format!("{:?}", e)))?;
 
-        let value = input.value.as_ref().ok_or(Status::invalid_argument("Missing value"))?;
-        
-        key.create_value(&key_req.name, to_reg_data(value.r#type(), value.data.clone()))
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
-            .map_err(|e| Status::internal(format!("{:?}", e)))
+        let value = input
+            .value
+            .as_ref()
+            .ok_or(Status::invalid_argument("Missing value"))?;
+
+        key.create_value(
+            &key_req.name,
+            to_reg_data(value.r#type(), value.data.clone()),
+        )
+        .map(|_| {
+            Response::new(winebridge::MessageResponse {
+                success: true,
+                error: None,
+            })
+        })
+        .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
     async fn delete_registry_key_value(
@@ -191,13 +238,22 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let hive = input.hive.parse().map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = input
+            .hive
+            .parse()
+            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
         let subkey = Path::new(&input.subkey);
 
-        RegistryManager.key(hive, subkey)
+        RegistryManager
+            .key(hive, subkey)
             .map_err(|e| Status::internal(format!("{:?}", e)))?
             .remove_value(&input.name)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
@@ -209,7 +265,10 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<winebridge::FileOperationResponse>, Status> {
         let path = request.into_inner().path;
         std::fs::create_dir_all(&path)
-            .map(|_| winebridge::FileOperationResponse { success: true, error: String::new() })
+            .map(|_| winebridge::FileOperationResponse {
+                success: true,
+                error: String::new(),
+            })
             .map_err(|e| Status::internal(e.to_string()))
             .map(Response::new)
     }
@@ -226,9 +285,12 @@ impl WineBridge for WineBridgeService {
             std::fs::remove_file(p)
         };
 
-        res.map(|_| winebridge::FileOperationResponse { success: true, error: String::new() })
-           .map_err(|e| Status::internal(e.to_string()))
-           .map(Response::new)
+        res.map(|_| winebridge::FileOperationResponse {
+            success: true,
+            error: String::new(),
+        })
+        .map_err(|e| Status::internal(e.to_string()))
+        .map(Response::new)
     }
 
     async fn copy_file(
@@ -238,7 +300,10 @@ impl WineBridge for WineBridgeService {
         let req = request.into_inner();
         // Simple copy, not recursive for dirs yet
         std::fs::copy(req.source, req.destination)
-            .map(|_| winebridge::FileOperationResponse { success: true, error: String::new() })
+            .map(|_| winebridge::FileOperationResponse {
+                success: true,
+                error: String::new(),
+            })
             .map_err(|e| Status::internal(e.to_string()))
             .map(Response::new)
     }
@@ -249,7 +314,10 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<winebridge::FileOperationResponse>, Status> {
         let req = request.into_inner();
         std::fs::rename(req.source, req.destination)
-            .map(|_| winebridge::FileOperationResponse { success: true, error: String::new() })
+            .map(|_| winebridge::FileOperationResponse {
+                success: true,
+                error: String::new(),
+            })
             .map_err(|e| Status::internal(e.to_string()))
             .map(Response::new)
     }
@@ -272,17 +340,17 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<winebridge::ListDirectoryResponse>, Status> {
         let path = request.into_inner().path;
         let entries = std::fs::read_dir(path).map_err(|e| Status::internal(e.to_string()))?;
-        
+
         let mut files = Vec::new();
         for entry in entries {
-            if let Ok(entry) = entry {
-                if let Ok(meta) = entry.metadata() {
-                    files.push(winebridge::FileInfo {
-                        name: entry.file_name().to_string_lossy().to_string(),
-                        is_dir: meta.is_dir(),
-                        size: meta.len(),
-                    });
-                }
+            if let Ok(entry) = entry
+                && let Ok(meta) = entry.metadata()
+            {
+                files.push(winebridge::FileInfo {
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    is_dir: meta.is_dir(),
+                    size: meta.len(),
+                });
             }
         }
         Ok(Response::new(winebridge::ListDirectoryResponse { files }))
@@ -333,7 +401,12 @@ impl WineBridge for WineBridgeService {
         let name = request.into_inner().name;
         ServiceManager
             .start(&name)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to start service: {:?}", e)))
     }
 
@@ -344,7 +417,12 @@ impl WineBridge for WineBridgeService {
         let name = request.into_inner().name;
         ServiceManager
             .stop(&name)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to stop service: {:?}", e)))
     }
 
@@ -354,8 +432,18 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.into_inner();
         ServiceManager
-            .create(&input.name, &input.display_name, &input.binary_path, input.start_type as u32)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .create(
+                &input.name,
+                &input.display_name,
+                &input.binary_path,
+                input.start_type as u32,
+            )
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to create service: {:?}", e)))
     }
 
@@ -366,7 +454,12 @@ impl WineBridge for WineBridgeService {
         let name = request.into_inner().name;
         ServiceManager
             .delete(&name)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to delete service: {:?}", e)))
     }
 
@@ -388,7 +481,9 @@ impl WineBridge for WineBridgeService {
             })
             .collect();
 
-        Ok(Response::new(winebridge::ListDllOverridesResponse { overrides }))
+        Ok(Response::new(winebridge::ListDllOverridesResponse {
+            overrides,
+        }))
     }
 
     async fn get_dll_override(
@@ -414,7 +509,12 @@ impl WineBridge for WineBridgeService {
         let mode = OverrideMode::from_proto_i32(input.mode);
         DllOverrideManager
             .set(&input.dll, mode)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to set DLL override: {:?}", e)))
     }
 
@@ -425,7 +525,12 @@ impl WineBridge for WineBridgeService {
         let dll = request.into_inner().dll;
         DllOverrideManager
             .delete(&dll)
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to delete DLL override: {:?}", e)))
     }
 
@@ -461,8 +566,10 @@ impl WineBridge for WineBridgeService {
 
         let exe = to_wide("wineboot.exe");
         let mut cmd = to_wide(&format!("wineboot.exe {}", args));
-        let mut startup_info = STARTUPINFOW::default();
-        startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+        let startup_info = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            ..Default::default()
+        };
         let mut process_info = windows::Win32::System::Threading::PROCESS_INFORMATION::default();
 
         let result = unsafe {
@@ -475,7 +582,7 @@ impl WineBridge for WineBridgeService {
                 CREATE_NEW_CONSOLE,
                 None,
                 PCWSTR::null(),
-                &mut startup_info,
+                &startup_info,
                 &mut process_info,
             )
         };
@@ -486,7 +593,12 @@ impl WineBridge for WineBridgeService {
         }
 
         result
-            .map(|_| Response::new(winebridge::MessageResponse { success: true, error: None }))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
+            })
             .map_err(|e| Status::internal(format!("Failed to execute wineboot: {:?}", e)))
     }
 
