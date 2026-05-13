@@ -48,17 +48,13 @@ pub struct ServiceManager;
 
 impl ServiceManager {
     fn open_scm(access: u32) -> Result<ScmHandle, Error> {
-        let handle = unsafe {
-            OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), access)
-        }?;
+        let handle = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), access) }?;
         Ok(ScmHandle(handle))
     }
 
     fn open_service(scm: &ScmHandle, name: &str, access: u32) -> Result<ServiceHandle, Error> {
         let wide = to_wide(name);
-        let handle = unsafe {
-            OpenServiceW(scm.0, PCWSTR(wide.as_ptr()), access)
-        }?;
+        let handle = unsafe { OpenServiceW(scm.0, PCWSTR(wide.as_ptr()), access) }?;
         Ok(ServiceHandle(handle))
     }
 
@@ -127,12 +123,17 @@ impl ServiceManager {
 
         for i in 0..services_returned as usize {
             let entry = unsafe { &*ptr.add(i) };
-            let name = from_wide(PWSTR(entry.lpServiceName.0 as *mut u16));
-            let display_name = from_wide(PWSTR(entry.lpDisplayName.0 as *mut u16));
+            let name = from_wide(PWSTR(entry.lpServiceName.0));
+            let display_name = from_wide(PWSTR(entry.lpDisplayName.0));
             let state = entry.ServiceStatusProcess.dwCurrentState.0;
             let start_type = self.query_start_type(&scm, &name).unwrap_or(0);
 
-            result.push(ServiceInfo { name, display_name, state, start_type });
+            result.push(ServiceInfo {
+                name,
+                display_name,
+                state,
+                start_type,
+            });
         }
 
         Ok(result)
