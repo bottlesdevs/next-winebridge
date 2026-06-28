@@ -44,9 +44,12 @@ impl ProcessManager {
 
         let executable_w = to_wide_string(executable.as_os_str());
         let mut command_line = to_wide_string(command_line);
-        let work_dir = request
-            .work_dir
-            .map(|work_dir| PCWSTR(to_wide_string(work_dir).as_ptr()))
+        // Keep the wide-encoded working directory alive for the whole CreateProcessW
+        // call: the PCWSTR below borrows this buffer, so it must outlive the call.
+        let work_dir_w = request.work_dir.map(to_wide_string);
+        let work_dir = work_dir_w
+            .as_ref()
+            .map(|work_dir| PCWSTR(work_dir.as_ptr()))
             .unwrap_or_else(PCWSTR::null);
 
         let flags = if request.terminal {
