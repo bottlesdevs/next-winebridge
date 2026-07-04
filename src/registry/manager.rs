@@ -1,16 +1,17 @@
 use bottles_core::proto as proto_winebridge;
-use std::{ops::Deref, path::Path, str::FromStr};
+use proto_winebridge::registry_value::Value as ProtoValue;
+use std::path::Path;
 use windows_registry::*;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Data {
+    None(Vec<u8>),
     DWord(u32),
     QWord(u64),
     String(String),
     ExpandString(String),
     MultiString(Vec<String>),
     Bytes(Vec<u8>),
-    Other,
 }
 
 impl Hive {
@@ -25,7 +26,7 @@ impl Hive {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Hive {
     ClassesRoot,
     CurrentConfig,
@@ -34,31 +35,29 @@ pub enum Hive {
     Users,
 }
 
-impl std::fmt::Display for Hive {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let disp = match self {
-            Hive::ClassesRoot => "HKCR",
-            Hive::CurrentConfig => "HKCC",
-            Hive::CurrentUser => "HKCU",
-            Hive::LocalMachine => "HKLM",
-            Hive::Users => "HKU",
-        };
+impl TryFrom<proto_winebridge::RegistryHive> for Hive {
+    type Error = &'static str;
 
-        write!(f, "{}", disp)
+    fn try_from(hive: proto_winebridge::RegistryHive) -> std::result::Result<Self, Self::Error> {
+        match hive {
+            proto_winebridge::RegistryHive::Unspecified => Err("registry hive is required"),
+            proto_winebridge::RegistryHive::ClassesRoot => Ok(Self::ClassesRoot),
+            proto_winebridge::RegistryHive::CurrentConfig => Ok(Self::CurrentConfig),
+            proto_winebridge::RegistryHive::CurrentUser => Ok(Self::CurrentUser),
+            proto_winebridge::RegistryHive::LocalMachine => Ok(Self::LocalMachine),
+            proto_winebridge::RegistryHive::Users => Ok(Self::Users),
+        }
     }
 }
 
-impl FromStr for Hive {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_uppercase().as_str() {
-            "CLASSESROOT" | "HKCR" => Ok(Hive::ClassesRoot),
-            "CURRENTCONFIG" | "HKCC" => Ok(Hive::CurrentConfig),
-            "CURRENTUSER" | "HKCU" => Ok(Hive::CurrentUser),
-            "LOCALMACHINE" | "HKLM" => Ok(Hive::LocalMachine),
-            "USERS" | "HKU" => Ok(Hive::Users),
-            _ => Err("invalid registry hive"),
+impl From<Hive> for proto_winebridge::RegistryHive {
+    fn from(hive: Hive) -> Self {
+        match hive {
+            Hive::ClassesRoot => Self::ClassesRoot,
+            Hive::CurrentConfig => Self::CurrentConfig,
+            Hive::CurrentUser => Self::CurrentUser,
+            Hive::LocalMachine => Self::LocalMachine,
+            Hive::Users => Self::Users,
         }
     }
 }
@@ -82,71 +81,70 @@ pub trait KeyExtension {
     fn create_value(&self, name: &str, data: Data) -> Result<()>;
     fn rename_value(&self, old_name: &str, new_name: &str) -> Result<()>;
 
-    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto_winebridge::RegistryKey;
+    fn as_registry_key(
+        &self,
+        hive: Hive,
+        subkey: &Path,
+    ) -> std::result::Result<proto_winebridge::RegistryKey, String>;
 }
 
-pub fn to_reg_data(ty: proto_winebridge::RegistryValueType, data: Vec<u8>) -> Data {
-    match ty {
-        proto_winebridge::RegistryValueType::RegBinary => Data::Bytes(data),
-        proto_winebridge::RegistryValueType::RegDword => {
-            let val = u32::from_le_bytes(data.try_into().unwrap());
-            Data::DWord(val)
-        }
-        proto_winebridge::RegistryValueType::RegQword => {
-            let val = u64::from_le_bytes(data.try_into().unwrap());
-            Data::QWord(val)
-        }
-        proto_winebridge::RegistryValueType::RegSz => {
-            let val = String::from_utf8(data).unwrap();
-            Data::String(val)
-        }
-        proto_winebridge::RegistryValueType::RegExpandSz => {
-            let val = String::from_utf8(data).unwrap();
-            Data::ExpandString(val)
-        }
-        proto_winebridge::RegistryValueType::RegMultiSz => {
-            let val = String::from_utf8(data).unwrap();
-            let strings: Vec<String> = val.split('\0').map(|s| s.to_string()).collect();
-            Data::MultiString(strings)
-        }
-        proto_winebridge::RegistryValueType::RegNone => Data::Other,
+pub fn to_reg_data(value: ProtoValue) -> Data {
+    match value {
+        ProtoValue::None(value) => Data::None(value),
+        ProtoValue::Binary(value) => Data::Bytes(value),
+        ProtoValue::Dword(value) => Data::DWord(value),
+        ProtoValue::Qword(value) => Data::QWord(value),
+        ProtoValue::String(value) => Data::String(value),
+        ProtoValue::ExpandString(value) => Data::ExpandString(value),
+        ProtoValue::MultiString(value) => Data::MultiString(value.values),
     }
 }
 
-pub fn to_proto_reg_val(value: Value) -> proto_winebridge::RegistryValue {
-    let ty = match value.ty() {
-        Type::Bytes => proto_winebridge::RegistryValueType::RegBinary,
-        Type::U32 => proto_winebridge::RegistryValueType::RegDword,
-        Type::U64 => proto_winebridge::RegistryValueType::RegQword,
-        Type::String => proto_winebridge::RegistryValueType::RegSz,
-        Type::ExpandString => proto_winebridge::RegistryValueType::RegExpandSz,
-        Type::MultiString => proto_winebridge::RegistryValueType::RegMultiSz,
-        Type::Other(_) => proto_winebridge::RegistryValueType::RegNone,
+pub fn to_proto_reg_val(
+    value: Value,
+) -> std::result::Result<proto_winebridge::RegistryValue, String> {
+    let value = match value.ty() {
+        Type::Bytes => ProtoValue::Binary(value.to_vec()),
+        Type::U32 => ProtoValue::Dword(u32::try_from(value).map_err(|error| error.to_string())?),
+        Type::U64 => ProtoValue::Qword(u64::try_from(value).map_err(|error| error.to_string())?),
+        Type::String => {
+            ProtoValue::String(String::try_from(value).map_err(|error| error.to_string())?)
+        }
+        Type::ExpandString => {
+            ProtoValue::ExpandString(String::try_from(value).map_err(|error| error.to_string())?)
+        }
+        Type::MultiString => ProtoValue::MultiString(proto_winebridge::RegistryMultiString {
+            values: Vec::<String>::try_from(value).map_err(|error| error.to_string())?,
+        }),
+        Type::Other(0) => ProtoValue::None(value.to_vec()),
+        Type::Other(_) => return Err("unsupported registry value type".to_string()),
     };
 
-    let val = value.deref();
-    proto_winebridge::RegistryValue {
-        r#type: ty as i32,
-        data: val.to_vec(),
-    }
+    Ok(proto_winebridge::RegistryValue { value: Some(value) })
 }
 
 impl KeyExtension for windows_registry::Key {
-    fn as_registry_key(&self, hive: Hive, subkey: &Path) -> proto_winebridge::RegistryKey {
+    fn as_registry_key(
+        &self,
+        hive: Hive,
+        subkey: &Path,
+    ) -> std::result::Result<proto_winebridge::RegistryKey, String> {
         let values: Vec<proto_winebridge::RegistryKeyValue> = self
             .values()
-            .unwrap()
-            .map(|(name, value)| proto_winebridge::RegistryKeyValue {
-                name,
-                value: Some(to_proto_reg_val(value)),
+            .map_err(|error| error.to_string())?
+            .map(|(name, value)| {
+                Ok(proto_winebridge::RegistryKeyValue {
+                    name,
+                    value: Some(to_proto_reg_val(value)?),
+                })
             })
-            .collect();
+            .collect::<std::result::Result<_, String>>()?;
 
-        proto_winebridge::RegistryKey {
-            hive: hive.to_string(),
+        Ok(proto_winebridge::RegistryKey {
+            hive: proto_winebridge::RegistryHive::from(hive) as i32,
             subkey: subkey.display().to_string(),
             values,
-        }
+        })
     }
 
     fn value(&self, name: &str) -> Result<Value> {
@@ -164,6 +162,7 @@ impl KeyExtension for windows_registry::Key {
 
     fn create_value(&self, name: &str, data: Data) -> Result<()> {
         match data {
+            Data::None(val) => self.set_bytes(name, Type::Other(0), &val),
             Data::Bytes(val) => self.set_bytes(name, Type::Bytes, &val),
             Data::DWord(val) => self.set_u32(name, val),
             Data::QWord(val) => self.set_u64(name, val),
@@ -173,7 +172,6 @@ impl KeyExtension for windows_registry::Key {
                 let d: Vec<&str> = val.iter().map(|s| s.as_str()).collect();
                 self.set_multi_string(name, &d)
             }
-            _ => unreachable!(),
         }
     }
 
@@ -211,6 +209,15 @@ impl RegistryManager {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn registry_value_round_trips_without_raw_type_data_pairs() {
+        let proto = to_proto_reg_val(Value::from(42u32)).unwrap();
+        let value = proto.value.unwrap();
+
+        assert_eq!(value, ProtoValue::Dword(42));
+        assert_eq!(to_reg_data(value), Data::DWord(42));
+    }
 
     fn test_subkey() -> PathBuf {
         PathBuf::from("Software\\WineBridgeTest")
