@@ -6,7 +6,7 @@ mod services;
 use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::{DllOverrideManager, OverrideMode};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
-use registry::manager::{KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
+use registry::manager::{Hive, KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
 use services::manager::ServiceManager;
 use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -22,6 +22,13 @@ use windows::core::PCWSTR;
 
 fn to_wide(s: &str) -> Vec<u16> {
     OsString::from(s).encode_wide().chain(Some(0)).collect()
+}
+
+fn registry_hive(hive: i32) -> Result<Hive, Status> {
+    winebridge::RegistryHive::try_from(hive)
+        .map_err(|_| Status::invalid_argument("invalid registry hive"))?
+        .try_into()
+        .map_err(Status::invalid_argument)
 }
 
 pub struct WineBridgeService {
@@ -116,10 +123,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::CreateRegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let hive = input
-            .hive
-            .parse()
-            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         RegistryManager
@@ -138,10 +142,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::DeleteRegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let hive = input
-            .hive
-            .parse()
-            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         RegistryManager
@@ -160,16 +161,14 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::GetRegistryKeyRequest>,
     ) -> Result<Response<winebridge::RegistryKey>, Status> {
         let input = request.get_ref();
-        let hive = input
-            .hive
-            .parse()
-            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         let key = RegistryManager
             .key(hive, subkey)
             .map_err(|e| Status::internal(format!("{:?}", e)))?
-            .as_registry_key(hive, subkey);
+            .as_registry_key(hive, subkey)
+            .map_err(Status::internal)?;
 
         Ok(Response::new(key))
     }
@@ -179,10 +178,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<winebridge::RegistryValue>, Status> {
         let input = request.get_ref();
-        let hive = input
-            .hive
-            .parse()
-            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         let key = RegistryManager
@@ -193,7 +189,9 @@ impl WineBridge for WineBridgeService {
             .value(&input.name)
             .map_err(|e| Status::internal(format!("{:?}", e)))?;
 
-        Ok(Response::new(to_proto_reg_val(value)))
+        Ok(Response::new(
+            to_proto_reg_val(value).map_err(Status::internal)?,
+        ))
     }
 
     async fn set_registry_key_value(
@@ -205,10 +203,7 @@ impl WineBridge for WineBridgeService {
             .key
             .as_ref()
             .ok_or(Status::invalid_argument("Missing key"))?;
-        let hive = key_req
-            .hive
-            .parse()
-            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = registry_hive(key_req.hive)?;
         let subkey = Path::new(&key_req.subkey);
 
         let key = RegistryManager
@@ -219,18 +214,19 @@ impl WineBridge for WineBridgeService {
             .value
             .as_ref()
             .ok_or(Status::invalid_argument("Missing value"))?;
+        let value = value
+            .value
+            .clone()
+            .ok_or(Status::invalid_argument("Missing registry value"))?;
 
-        key.create_value(
-            &key_req.name,
-            to_reg_data(value.r#type(), value.data.clone()),
-        )
-        .map(|_| {
-            Response::new(winebridge::MessageResponse {
-                success: true,
-                error: None,
+        key.create_value(&key_req.name, to_reg_data(value))
+            .map(|_| {
+                Response::new(winebridge::MessageResponse {
+                    success: true,
+                    error: None,
+                })
             })
-        })
-        .map_err(|e| Status::internal(format!("{:?}", e)))
+            .map_err(|e| Status::internal(format!("{:?}", e)))
     }
 
     async fn delete_registry_key_value(
@@ -238,10 +234,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>, Status> {
         let input = request.get_ref();
-        let hive = input
-            .hive
-            .parse()
-            .map_err(|e| Status::invalid_argument(format!("{:?}", e)))?;
+        let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         RegistryManager
