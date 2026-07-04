@@ -12,7 +12,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 use tokio::sync::{Mutex, oneshot};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response, Result, Status};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetLogicalDrives, GetVolumeInformationW,
@@ -24,7 +24,7 @@ fn to_wide(s: &str) -> Vec<u16> {
     OsString::from(s).encode_wide().chain(Some(0)).collect()
 }
 
-fn registry_hive(hive: i32) -> Result<Hive, Status> {
+fn registry_hive(hive: i32) -> Result<Hive> {
     winebridge::RegistryHive::try_from(hive)
         .map_err(|_| Status::invalid_argument("invalid registry hive"))?
         .try_into()
@@ -48,14 +48,14 @@ impl WineBridge for WineBridgeService {
     async fn health(
         &self,
         _request: Request<winebridge::BridgeHealthRequest>,
-    ) -> Result<Response<winebridge::BridgeHealthResponse>, Status> {
+    ) -> Result<Response<winebridge::BridgeHealthResponse>> {
         Ok(Response::new(winebridge::BridgeHealthResponse { ok: true }))
     }
 
     async fn message(
         &self,
         request: Request<winebridge::MessageRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let _ = request;
         Ok(Response::new(winebridge::MessageResponse {
             success: true,
@@ -68,7 +68,7 @@ impl WineBridge for WineBridgeService {
     async fn running_processes(
         &self,
         _request: Request<winebridge::RunningProcessesRequest>,
-    ) -> Result<Response<winebridge::RunningProcessesResponse>, Status> {
+    ) -> Result<Response<winebridge::RunningProcessesResponse>> {
         let processes = ProcessManager
             .running_processes()
             .map_err(|e| Status::internal(format!("Failed to get running processes: {:?}", e)))?;
@@ -90,7 +90,7 @@ impl WineBridge for WineBridgeService {
     async fn create_process(
         &self,
         request: Request<winebridge::CreateProcessRequest>,
-    ) -> Result<Response<winebridge::CreateProcessResponse>, Status> {
+    ) -> Result<Response<winebridge::CreateProcessResponse>> {
         let pid = ProcessManager
             .execute(request.into_inner())
             .map_err(|e| Status::internal(format!("Failed to execute process: {:?}", e)))?;
@@ -101,7 +101,7 @@ impl WineBridge for WineBridgeService {
     async fn kill_process(
         &self,
         request: Request<winebridge::KillProcessRequest>,
-    ) -> Result<Response<winebridge::KillProcessResponse>, Status> {
+    ) -> Result<Response<winebridge::KillProcessResponse>> {
         let pid = request.get_ref().pid;
         let process = ProcessManager
             .process(ProcessIdentifier::Pid(pid))
@@ -121,7 +121,7 @@ impl WineBridge for WineBridgeService {
     async fn create_registry_key(
         &self,
         request: Request<winebridge::CreateRegistryKeyRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
         let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
@@ -140,7 +140,7 @@ impl WineBridge for WineBridgeService {
     async fn delete_registry_key(
         &self,
         request: Request<winebridge::DeleteRegistryKeyRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
         let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
@@ -159,7 +159,7 @@ impl WineBridge for WineBridgeService {
     async fn get_registry_key(
         &self,
         request: Request<winebridge::GetRegistryKeyRequest>,
-    ) -> Result<Response<winebridge::RegistryKey>, Status> {
+    ) -> Result<Response<winebridge::RegistryKey>> {
         let input = request.get_ref();
         let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
@@ -176,7 +176,7 @@ impl WineBridge for WineBridgeService {
     async fn get_registry_key_value(
         &self,
         request: Request<winebridge::RegistryKeyRequest>,
-    ) -> Result<Response<winebridge::RegistryValue>, Status> {
+    ) -> Result<Response<winebridge::RegistryValue>> {
         let input = request.get_ref();
         let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
@@ -197,7 +197,7 @@ impl WineBridge for WineBridgeService {
     async fn set_registry_key_value(
         &self,
         request: Request<winebridge::SetRegistryKeyValueRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
         let key_req = input
             .key
@@ -232,7 +232,7 @@ impl WineBridge for WineBridgeService {
     async fn delete_registry_key_value(
         &self,
         request: Request<winebridge::RegistryKeyRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
         let hive = registry_hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
@@ -255,7 +255,7 @@ impl WineBridge for WineBridgeService {
     async fn create_directory(
         &self,
         request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>, Status> {
+    ) -> Result<Response<winebridge::FileOperationResponse>> {
         let path = request.into_inner().path;
         std::fs::create_dir_all(&path)
             .map(|_| winebridge::FileOperationResponse {
@@ -269,7 +269,7 @@ impl WineBridge for WineBridgeService {
     async fn delete_file(
         &self,
         request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>, Status> {
+    ) -> Result<Response<winebridge::FileOperationResponse>> {
         let path = request.into_inner().path;
         let p = Path::new(&path);
         let res = if p.is_dir() {
@@ -289,7 +289,7 @@ impl WineBridge for WineBridgeService {
     async fn copy_file(
         &self,
         request: Request<winebridge::CopyMoveRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>, Status> {
+    ) -> Result<Response<winebridge::FileOperationResponse>> {
         let req = request.into_inner();
         // Simple copy, not recursive for dirs yet
         std::fs::copy(req.source, req.destination)
@@ -304,7 +304,7 @@ impl WineBridge for WineBridgeService {
     async fn move_file(
         &self,
         request: Request<winebridge::CopyMoveRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>, Status> {
+    ) -> Result<Response<winebridge::FileOperationResponse>> {
         let req = request.into_inner();
         std::fs::rename(req.source, req.destination)
             .map(|_| winebridge::FileOperationResponse {
@@ -318,7 +318,7 @@ impl WineBridge for WineBridgeService {
     async fn exists(
         &self,
         request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::ExistsResponse>, Status> {
+    ) -> Result<Response<winebridge::ExistsResponse>> {
         let inner = request.into_inner();
         let path = Path::new(&inner.path);
         Ok(Response::new(winebridge::ExistsResponse {
@@ -330,7 +330,7 @@ impl WineBridge for WineBridgeService {
     async fn list_directory(
         &self,
         request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::ListDirectoryResponse>, Status> {
+    ) -> Result<Response<winebridge::ListDirectoryResponse>> {
         let path = request.into_inner().path;
         let entries = std::fs::read_dir(path).map_err(|e| Status::internal(e.to_string()))?;
 
@@ -354,7 +354,7 @@ impl WineBridge for WineBridgeService {
     async fn list_services(
         &self,
         _request: Request<winebridge::ListServicesRequest>,
-    ) -> Result<Response<winebridge::ListServicesResponse>, Status> {
+    ) -> Result<Response<winebridge::ListServicesResponse>> {
         let services = ServiceManager
             .list_services()
             .map_err(|e| Status::internal(format!("Failed to list services: {:?}", e)))?;
@@ -375,7 +375,7 @@ impl WineBridge for WineBridgeService {
     async fn get_service_status(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::ServiceStatusResponse>, Status> {
+    ) -> Result<Response<winebridge::ServiceStatusResponse>> {
         let name = request.into_inner().name;
         let state = ServiceManager
             .get_status(&name)
@@ -390,7 +390,7 @@ impl WineBridge for WineBridgeService {
     async fn start_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let name = request.into_inner().name;
         ServiceManager
             .start(&name)
@@ -406,7 +406,7 @@ impl WineBridge for WineBridgeService {
     async fn stop_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let name = request.into_inner().name;
         ServiceManager
             .stop(&name)
@@ -422,7 +422,7 @@ impl WineBridge for WineBridgeService {
     async fn create_service(
         &self,
         request: Request<winebridge::CreateServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.into_inner();
         ServiceManager
             .create(
@@ -443,7 +443,7 @@ impl WineBridge for WineBridgeService {
     async fn delete_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let name = request.into_inner().name;
         ServiceManager
             .delete(&name)
@@ -461,7 +461,7 @@ impl WineBridge for WineBridgeService {
     async fn list_dll_overrides(
         &self,
         _request: Request<winebridge::ListDllOverridesRequest>,
-    ) -> Result<Response<winebridge::ListDllOverridesResponse>, Status> {
+    ) -> Result<Response<winebridge::ListDllOverridesResponse>> {
         let overrides = DllOverrideManager
             .list()
             .map_err(|e| Status::internal(format!("Failed to list DLL overrides: {:?}", e)))?;
@@ -482,7 +482,7 @@ impl WineBridge for WineBridgeService {
     async fn get_dll_override(
         &self,
         request: Request<winebridge::DllOverrideRequest>,
-    ) -> Result<Response<winebridge::DllOverrideResponse>, Status> {
+    ) -> Result<Response<winebridge::DllOverrideResponse>> {
         let dll = request.into_inner().dll;
         let entry = DllOverrideManager
             .get(&dll)
@@ -497,7 +497,7 @@ impl WineBridge for WineBridgeService {
     async fn set_dll_override(
         &self,
         request: Request<winebridge::SetDllOverrideRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.into_inner();
         let mode = OverrideMode::from_proto_i32(input.mode);
         DllOverrideManager
@@ -514,7 +514,7 @@ impl WineBridge for WineBridgeService {
     async fn delete_dll_override(
         &self,
         request: Request<winebridge::DllOverrideRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let dll = request.into_inner().dll;
         DllOverrideManager
             .delete(&dll)
@@ -532,7 +532,7 @@ impl WineBridge for WineBridgeService {
     async fn shutdown(
         &self,
         _request: Request<winebridge::ShutdownRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         if let Some(tx) = self.shutdown_signal.lock().await.take() {
             let _ = tx
                 .send(())
@@ -548,7 +548,7 @@ impl WineBridge for WineBridgeService {
     async fn wineboot(
         &self,
         request: Request<winebridge::WinebootRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>, Status> {
+    ) -> Result<Response<winebridge::MessageResponse>> {
         let mode = request.into_inner().mode;
 
         let args = match mode {
@@ -598,7 +598,7 @@ impl WineBridge for WineBridgeService {
     async fn get_drive_info(
         &self,
         _request: Request<winebridge::DriveInfoRequest>,
-    ) -> Result<Response<winebridge::DriveInfoResponse>, Status> {
+    ) -> Result<Response<winebridge::DriveInfoResponse>> {
         let bitmask = unsafe { GetLogicalDrives() };
         let mut drives = Vec::new();
 
