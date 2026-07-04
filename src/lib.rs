@@ -6,7 +6,7 @@ mod services;
 use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::{DllOverrideManager, OverrideMode};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
-use registry::manager::{Hive, KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
+use registry::manager::{KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
 use services::manager::ServiceManager;
 use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -116,7 +116,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::CreateRegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
-        let hive = Hive::try_from(input.hive)?;
+        let hive = registry::hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         RegistryManager
@@ -135,7 +135,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::DeleteRegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
-        let hive = Hive::try_from(input.hive)?;
+        let hive = registry::hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         RegistryManager
@@ -154,7 +154,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::GetRegistryKeyRequest>,
     ) -> Result<Response<winebridge::RegistryKey>> {
         let input = request.get_ref();
-        let hive = Hive::try_from(input.hive)?;
+        let hive = registry::hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         let key = RegistryManager
@@ -171,7 +171,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<winebridge::RegistryValue>> {
         let input = request.get_ref();
-        let hive = Hive::try_from(input.hive)?;
+        let hive = registry::hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         let key = RegistryManager
@@ -196,7 +196,7 @@ impl WineBridge for WineBridgeService {
             .key
             .as_ref()
             .ok_or(Status::invalid_argument("Missing key"))?;
-        let hive = Hive::try_from(key_req.hive)?;
+        let hive = registry::hive(key_req.hive)?;
         let subkey = Path::new(&key_req.subkey);
 
         let key = RegistryManager
@@ -227,7 +227,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<winebridge::MessageResponse>> {
         let input = request.get_ref();
-        let hive = Hive::try_from(input.hive)?;
+        let hive = registry::hive(input.hive)?;
         let subkey = Path::new(&input.subkey);
 
         RegistryManager

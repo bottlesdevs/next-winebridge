@@ -1,6 +1,9 @@
 use bottles_core::proto as proto_winebridge;
+use proto_winebridge::RegistryHive;
 use proto_winebridge::registry_value::Value as ProtoValue;
 use std::path::Path;
+use windows::Win32::Foundation::E_INVALIDARG;
+use windows::core::Error;
 use windows_registry::*;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -14,66 +17,35 @@ pub enum Data {
     Bytes(Vec<u8>),
 }
 
-impl Hive {
-    pub fn inner(&self) -> &Key {
+pub trait HiveExtension {
+    fn inner(&self) -> Result<&'static Key>;
+}
+
+impl HiveExtension for RegistryHive {
+    fn inner(&self) -> Result<&'static Key> {
         match self {
-            Hive::ClassesRoot => CLASSES_ROOT,
-            Hive::CurrentConfig => CURRENT_CONFIG,
-            Hive::CurrentUser => CURRENT_USER,
-            Hive::LocalMachine => LOCAL_MACHINE,
-            Hive::Users => USERS,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Hive {
-    ClassesRoot,
-    CurrentConfig,
-    CurrentUser,
-    LocalMachine,
-    Users,
-}
-
-impl TryFrom<proto_winebridge::RegistryHive> for Hive {
-    type Error = &'static str;
-
-    fn try_from(hive: proto_winebridge::RegistryHive) -> std::result::Result<Self, Self::Error> {
-        match hive {
-            proto_winebridge::RegistryHive::Unspecified => Err("registry hive is required"),
-            proto_winebridge::RegistryHive::ClassesRoot => Ok(Self::ClassesRoot),
-            proto_winebridge::RegistryHive::CurrentConfig => Ok(Self::CurrentConfig),
-            proto_winebridge::RegistryHive::CurrentUser => Ok(Self::CurrentUser),
-            proto_winebridge::RegistryHive::LocalMachine => Ok(Self::LocalMachine),
-            proto_winebridge::RegistryHive::Users => Ok(Self::Users),
-        }
-    }
-}
-
-impl From<Hive> for proto_winebridge::RegistryHive {
-    fn from(hive: Hive) -> Self {
-        match hive {
-            Hive::ClassesRoot => Self::ClassesRoot,
-            Hive::CurrentConfig => Self::CurrentConfig,
-            Hive::CurrentUser => Self::CurrentUser,
-            Hive::LocalMachine => Self::LocalMachine,
-            Hive::Users => Self::Users,
+            RegistryHive::ClassesRoot => Ok(CLASSES_ROOT),
+            RegistryHive::CurrentConfig => Ok(CURRENT_CONFIG),
+            RegistryHive::CurrentUser => Ok(CURRENT_USER),
+            RegistryHive::LocalMachine => Ok(LOCAL_MACHINE),
+            RegistryHive::Users => Ok(USERS),
+            RegistryHive::Unspecified => Err(Error::new(E_INVALIDARG, "registry hive is required")),
         }
     }
 }
 
 #[allow(dead_code)]
 pub trait KeyExtension {
-    fn get(hive: Hive, subkey: &Path) -> Result<Key> {
-        hive.inner().open(subkey.display().to_string())
+    fn get(hive: RegistryHive, subkey: &Path) -> Result<Key> {
+        hive.inner()?.open(subkey.display().to_string())
     }
 
-    fn new(hive: Hive, subkey: &Path) -> Result<Key> {
-        hive.inner().create(subkey.display().to_string())
+    fn new(hive: RegistryHive, subkey: &Path) -> Result<Key> {
+        hive.inner()?.create(subkey.display().to_string())
     }
 
-    fn delete(hive: Hive, subkey: &Path) -> Result<()> {
-        hive.inner().remove_tree(subkey.display().to_string())
+    fn delete(hive: RegistryHive, subkey: &Path) -> Result<()> {
+        hive.inner()?.remove_tree(subkey.display().to_string())
     }
 
     fn value(&self, name: &str) -> Result<Value>;
@@ -83,7 +55,7 @@ pub trait KeyExtension {
 
     fn as_registry_key(
         &self,
-        hive: Hive,
+        hive: RegistryHive,
         subkey: &Path,
     ) -> std::result::Result<proto_winebridge::RegistryKey, String>;
 }
@@ -126,7 +98,7 @@ pub fn to_proto_reg_val(
 impl KeyExtension for windows_registry::Key {
     fn as_registry_key(
         &self,
-        hive: Hive,
+        hive: RegistryHive,
         subkey: &Path,
     ) -> std::result::Result<proto_winebridge::RegistryKey, String> {
         let values: Vec<proto_winebridge::RegistryKeyValue> = self
@@ -141,7 +113,7 @@ impl KeyExtension for windows_registry::Key {
             .collect::<std::result::Result<_, String>>()?;
 
         Ok(proto_winebridge::RegistryKey {
-            hive: proto_winebridge::RegistryHive::from(hive) as i32,
+            hive: hive as i32,
             subkey: subkey.display().to_string(),
             values,
         })
@@ -186,21 +158,21 @@ pub struct RegistryManager;
 
 #[allow(dead_code)]
 impl RegistryManager {
-    pub fn value(&self, hive: Hive, subkey: &Path, name: &str) -> Result<Value> {
-        let key = hive.inner().open(subkey.display().to_string())?;
+    pub fn value(&self, hive: RegistryHive, subkey: &Path, name: &str) -> Result<Value> {
+        let key = hive.inner()?.open(subkey.display().to_string())?;
 
         key.value(name)
     }
 
-    pub fn key(&self, hive: Hive, subkey: &Path) -> Result<Key> {
-        hive.inner().open(subkey.display().to_string())
+    pub fn key(&self, hive: RegistryHive, subkey: &Path) -> Result<Key> {
+        hive.inner()?.open(subkey.display().to_string())
     }
 
-    pub fn create_key(&self, hive: Hive, subkey: &Path) -> Result<Key> {
+    pub fn create_key(&self, hive: RegistryHive, subkey: &Path) -> Result<Key> {
         Key::new(hive, subkey)
     }
 
-    pub fn delete_key(&self, hive: Hive, subkey: &Path) -> Result<()> {
+    pub fn delete_key(&self, hive: RegistryHive, subkey: &Path) -> Result<()> {
         Key::delete(hive, subkey)
     }
 }
@@ -225,23 +197,24 @@ mod tests {
 
     #[test]
     fn test_create_key() {
-        let hive = Hive::CurrentUser;
+        let hive = RegistryHive::CurrentUser;
         let subkey = test_subkey();
         assert!(Key::new(hive, &subkey).is_ok(), "Failed to create key");
 
         // Check if the key exists
-        let key = hive.inner().open(&subkey.display().to_string());
+        let key = hive.inner().unwrap().open(&subkey.display().to_string());
         assert!(key.is_ok(), "Failed to open key");
 
         // Clean up
         hive.inner()
+            .unwrap()
             .remove_tree(&subkey.display().to_string())
             .expect("Failed to delete test key");
     }
 
     #[test]
     fn test_get_key() {
-        let hive = Hive::CurrentUser;
+        let hive = RegistryHive::CurrentUser;
         let subkey = test_subkey();
         Key::new(hive, &subkey).expect("Failed to create key");
 
@@ -251,13 +224,14 @@ mod tests {
 
         // Clean up
         hive.inner()
+            .unwrap()
             .remove_tree(&subkey.display().to_string())
             .expect("Failed to delete test key");
     }
 
     #[test]
     fn test_delete_key() {
-        let hive = Hive::CurrentUser;
+        let hive = RegistryHive::CurrentUser;
         let subkey = test_subkey();
         Key::new(hive, &subkey).expect("Failed to create key");
 
@@ -265,13 +239,13 @@ mod tests {
         Key::delete(hive, &subkey).expect("Failed to delete key");
 
         // Check if the key is deleted
-        let key = hive.inner().open(&subkey.display().to_string());
+        let key = hive.inner().unwrap().open(&subkey.display().to_string());
         assert!(key.is_err(), "Key still exists after deletion");
     }
 
     #[test]
     fn test_create_value() {
-        let hive = Hive::CurrentUser;
+        let hive = RegistryHive::CurrentUser;
         let subkey = test_subkey();
 
         let key = Key::new(hive, &subkey).expect("Failed to create key");
@@ -297,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_rename_value() {
-        let hive = Hive::CurrentUser;
+        let hive = RegistryHive::CurrentUser;
         let subkey = test_subkey();
         let key = Key::new(hive, &subkey).expect("Failed to open key");
 
