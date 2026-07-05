@@ -64,6 +64,19 @@ fn required(value: &str, field: &str) -> Result<(), Status> {
     }
 }
 
+fn wineboot_args(value: i32) -> Result<&'static str, Status> {
+    match winebridge::WinebootMode::try_from(value)
+        .map_err(|_| Status::invalid_argument("invalid wineboot mode"))?
+    {
+        winebridge::WinebootMode::Unspecified => {
+            Err(Status::invalid_argument("wineboot mode is required"))
+        }
+        winebridge::WinebootMode::Normal => Ok("/r"),
+        winebridge::WinebootMode::Shutdown => Ok("/s"),
+        winebridge::WinebootMode::Kill => Ok("/k"),
+    }
+}
+
 pub struct WineBridgeService {
     shutdown_signal: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -429,33 +442,20 @@ impl WineBridge for WineBridgeService {
 
     // --- System ---
 
-    async fn shutdown(
-        &self,
-        _request: Request<winebridge::ShutdownRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    async fn shutdown(&self, _request: Request<()>) -> Result<Response<()>> {
         if let Some(tx) = self.shutdown_signal.lock().await.take() {
-            let _ = tx
-                .send(())
+            tx.send(())
                 .map_err(|_| Status::internal("Failed to send shutdown signal"))?;
         }
 
-        Ok(Response::new(winebridge::MessageResponse {
-            success: true,
-            error: None,
-        }))
+        Ok(Response::new(()))
     }
 
-    async fn wineboot(
+    async fn run_wineboot(
         &self,
         request: Request<winebridge::WinebootRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
-        let mode = request.into_inner().mode;
-
-        let args = match mode {
-            1 => "/s",
-            2 => "/k",
-            _ => "/r",
-        };
+    ) -> Result<Response<()>> {
+        let args = wineboot_args(request.into_inner().mode)?;
 
         let exe = to_wide("wineboot.exe");
         let mut cmd = to_wide(&format!("wineboot.exe {}", args));
@@ -485,20 +485,14 @@ impl WineBridge for WineBridgeService {
             CloseHandle(process_info.hThread).ok();
         }
 
-        result
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to execute wineboot: {:?}", e)))
+        result.map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
-    async fn get_drive_info(
+    async fn list_drives(
         &self,
-        _request: Request<winebridge::DriveInfoRequest>,
-    ) -> Result<Response<winebridge::DriveInfoResponse>> {
+        _request: Request<()>,
+    ) -> Result<Response<winebridge::ListDrivesResponse>> {
         let bitmask = unsafe { GetLogicalDrives() };
         let mut drives = Vec::new();
 
@@ -551,7 +545,7 @@ impl WineBridge for WineBridgeService {
             });
         }
 
-        Ok(Response::new(winebridge::DriveInfoResponse { drives }))
+        Ok(Response::new(winebridge::ListDrivesResponse { drives }))
     }
 }
 
@@ -578,5 +572,15 @@ mod tests {
         assert_eq!(file_info.size, Some(3));
 
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn validates_wineboot_modes() {
+        assert!(wineboot_args(0).is_err());
+        assert_eq!(
+            wineboot_args(winebridge::WinebootMode::Shutdown as i32).unwrap(),
+            "/s"
+        );
+        assert!(wineboot_args(i32::MAX).is_err());
     }
 }
