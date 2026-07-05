@@ -25,6 +25,35 @@ fn to_wide(s: &str) -> Vec<u16> {
     OsString::from(s).encode_wide().chain(Some(0)).collect()
 }
 
+fn validated_path(value: &str) -> Result<&Path, Status> {
+    if value.is_empty() || value.contains('\0') {
+        Err(Status::invalid_argument(
+            "path must be non-empty and contain no NUL bytes",
+        ))
+    } else {
+        Ok(Path::new(value))
+    }
+}
+
+fn path_info(path: &Path) -> Result<winebridge::PathInfo, Status> {
+    let metadata = std::fs::metadata(path).map_err(status::io)?;
+    let (kind, size) = if metadata.is_file() {
+        (winebridge::PathKind::File, Some(metadata.len()))
+    } else if metadata.is_dir() {
+        (winebridge::PathKind::Directory, None)
+    } else {
+        return Err(Status::failed_precondition(
+            "path is neither a regular file nor a directory",
+        ));
+    };
+
+    Ok(winebridge::PathInfo {
+        path: path.display().to_string(),
+        kind: kind as i32,
+        size,
+    })
+}
+
 pub struct WineBridgeService {
     shutdown_signal: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -176,99 +205,83 @@ impl WineBridge for WineBridgeService {
 
     async fn create_directory(
         &self,
-        request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>> {
+        request: Request<winebridge::PathRequest>,
+    ) -> Result<Response<()>> {
         let path = request.into_inner().path;
-        std::fs::create_dir_all(&path)
-            .map(|_| winebridge::FileOperationResponse {
-                success: true,
-                error: String::new(),
-            })
-            .map_err(|e| Status::internal(e.to_string()))
-            .map(Response::new)
+        std::fs::create_dir_all(validated_path(&path)?).map_err(status::io)?;
+        Ok(Response::new(()))
     }
 
-    async fn delete_file(
-        &self,
-        request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>> {
+    async fn delete_file(&self, request: Request<winebridge::PathRequest>) -> Result<Response<()>> {
         let path = request.into_inner().path;
-        let p = Path::new(&path);
-        let res = if p.is_dir() {
-            std::fs::remove_dir_all(p)
-        } else {
-            std::fs::remove_file(p)
-        };
+        let path = validated_path(&path)?;
+        if std::fs::metadata(path).map_err(status::io)?.is_dir() {
+            return Err(Status::failed_precondition("path is a directory"));
+        }
+        std::fs::remove_file(path).map_err(status::io)?;
+        Ok(Response::new(()))
+    }
 
-        res.map(|_| winebridge::FileOperationResponse {
-            success: true,
-            error: String::new(),
-        })
-        .map_err(|e| Status::internal(e.to_string()))
-        .map(Response::new)
+    async fn delete_directory_tree(
+        &self,
+        request: Request<winebridge::PathRequest>,
+    ) -> Result<Response<()>> {
+        let path = request.into_inner().path;
+        let path = validated_path(&path)?;
+        if !std::fs::metadata(path).map_err(status::io)?.is_dir() {
+            return Err(Status::failed_precondition("path is not a directory"));
+        }
+        std::fs::remove_dir_all(path).map_err(status::io)?;
+        Ok(Response::new(()))
     }
 
     async fn copy_file(
         &self,
-        request: Request<winebridge::CopyMoveRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>> {
+        request: Request<winebridge::PathTransferRequest>,
+    ) -> Result<Response<()>> {
         let req = request.into_inner();
-        // Simple copy, not recursive for dirs yet
-        std::fs::copy(req.source, req.destination)
-            .map(|_| winebridge::FileOperationResponse {
-                success: true,
-                error: String::new(),
-            })
-            .map_err(|e| Status::internal(e.to_string()))
-            .map(Response::new)
+        let source = validated_path(&req.source)?;
+        if !std::fs::metadata(source).map_err(status::io)?.is_file() {
+            return Err(Status::failed_precondition("source is not a file"));
+        }
+        std::fs::copy(source, validated_path(&req.destination)?).map_err(status::io)?;
+        Ok(Response::new(()))
     }
 
-    async fn move_file(
+    async fn move_path(
         &self,
-        request: Request<winebridge::CopyMoveRequest>,
-    ) -> Result<Response<winebridge::FileOperationResponse>> {
+        request: Request<winebridge::PathTransferRequest>,
+    ) -> Result<Response<()>> {
         let req = request.into_inner();
-        std::fs::rename(req.source, req.destination)
-            .map(|_| winebridge::FileOperationResponse {
-                success: true,
-                error: String::new(),
-            })
-            .map_err(|e| Status::internal(e.to_string()))
-            .map(Response::new)
+        std::fs::rename(
+            validated_path(&req.source)?,
+            validated_path(&req.destination)?,
+        )
+        .map_err(status::io)?;
+        Ok(Response::new(()))
     }
 
-    async fn exists(
+    async fn get_path_info(
         &self,
-        request: Request<winebridge::FileOperationRequest>,
-    ) -> Result<Response<winebridge::ExistsResponse>> {
-        let inner = request.into_inner();
-        let path = Path::new(&inner.path);
-        Ok(Response::new(winebridge::ExistsResponse {
-            exists: path.exists(),
-            is_dir: path.is_dir(),
-        }))
+        request: Request<winebridge::PathRequest>,
+    ) -> Result<Response<winebridge::PathInfo>> {
+        let path = request.into_inner().path;
+        Ok(Response::new(path_info(validated_path(&path)?)?))
     }
 
     async fn list_directory(
         &self,
-        request: Request<winebridge::FileOperationRequest>,
+        request: Request<winebridge::PathRequest>,
     ) -> Result<Response<winebridge::ListDirectoryResponse>> {
         let path = request.into_inner().path;
-        let entries = std::fs::read_dir(path).map_err(|e| Status::internal(e.to_string()))?;
-
-        let mut files = Vec::new();
+        let entries = std::fs::read_dir(validated_path(&path)?).map_err(status::io)?;
+        let mut result = Vec::new();
         for entry in entries {
-            if let Ok(entry) = entry
-                && let Ok(meta) = entry.metadata()
-            {
-                files.push(winebridge::FileInfo {
-                    name: entry.file_name().to_string_lossy().to_string(),
-                    is_dir: meta.is_dir(),
-                    size: meta.len(),
-                });
-            }
+            result.push(path_info(&entry.map_err(status::io)?.path())?);
         }
-        Ok(Response::new(winebridge::ListDirectoryResponse { files }))
+        Ok(Response::new(winebridge::ListDirectoryResponse {
+            entries: result,
+        }))
     }
 
     // --- Service Management ---
@@ -574,5 +587,31 @@ impl WineBridge for WineBridgeService {
         }
 
         Ok(Response::new(winebridge::DriveInfoResponse { drives }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_info_distinguishes_files_and_directories() {
+        let directory = std::env::temp_dir().join(format!(
+            "bottles-winebridge-path-info-{}",
+            std::process::id()
+        ));
+        let file = directory.join("file.bin");
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(&file, [1, 2, 3]).unwrap();
+
+        let directory_info = path_info(&directory).unwrap();
+        let file_info = path_info(&file).unwrap();
+        assert_eq!(directory_info.kind(), winebridge::PathKind::Directory);
+        assert_eq!(directory_info.size, None);
+        assert_eq!(file_info.kind(), winebridge::PathKind::File);
+        assert_eq!(file_info.size, Some(3));
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
