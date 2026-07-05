@@ -5,7 +5,7 @@ mod services;
 mod status;
 
 use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
-use dll_overrides::manager::{DllOverrideManager, OverrideMode};
+use dll_overrides::manager::DllOverrideManager;
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
 use registry::operations;
 use services::manager::ServiceManager;
@@ -379,19 +379,9 @@ impl WineBridge for WineBridgeService {
 
     async fn list_dll_overrides(
         &self,
-        _request: Request<winebridge::ListDllOverridesRequest>,
+        _request: Request<()>,
     ) -> Result<Response<winebridge::ListDllOverridesResponse>> {
-        let overrides = DllOverrideManager
-            .list()
-            .map_err(|e| Status::internal(format!("Failed to list DLL overrides: {:?}", e)))?;
-
-        let overrides = overrides
-            .into_iter()
-            .map(|o| winebridge::DllOverride {
-                dll: o.dll,
-                mode: o.mode.to_proto_i32(),
-            })
-            .collect();
+        let overrides = DllOverrideManager.list().map_err(status::windows)?;
 
         Ok(Response::new(winebridge::ListDllOverridesResponse {
             overrides,
@@ -401,49 +391,40 @@ impl WineBridge for WineBridgeService {
     async fn get_dll_override(
         &self,
         request: Request<winebridge::DllOverrideRequest>,
-    ) -> Result<Response<winebridge::DllOverrideResponse>> {
+    ) -> Result<Response<winebridge::DllOverride>> {
         let dll = request.into_inner().dll;
-        let entry = DllOverrideManager
-            .get(&dll)
-            .map_err(|e| Status::internal(format!("Failed to get DLL override: {:?}", e)))?;
+        required(&dll, "DLL name")?;
 
-        Ok(Response::new(winebridge::DllOverrideResponse {
-            dll: entry.dll,
-            mode: entry.mode.to_proto_i32(),
-        }))
+        Ok(Response::new(
+            DllOverrideManager.get(&dll).map_err(status::windows)?,
+        ))
     }
 
     async fn set_dll_override(
         &self,
         request: Request<winebridge::SetDllOverrideRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    ) -> Result<Response<()>> {
         let input = request.into_inner();
-        let mode = OverrideMode::from_proto_i32(input.mode);
+        required(&input.dll, "DLL name")?;
+        let mode = winebridge::DllOverrideMode::try_from(input.mode)
+            .map_err(|_| Status::invalid_argument("invalid DLL override mode"))?;
+        if mode == winebridge::DllOverrideMode::Unspecified {
+            return Err(Status::invalid_argument("DLL override mode is required"));
+        }
         DllOverrideManager
             .set(&input.dll, mode)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to set DLL override: {:?}", e)))
+            .map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
     async fn delete_dll_override(
         &self,
         request: Request<winebridge::DllOverrideRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    ) -> Result<Response<()>> {
         let dll = request.into_inner().dll;
-        DllOverrideManager
-            .delete(&dll)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to delete DLL override: {:?}", e)))
+        required(&dll, "DLL name")?;
+        DllOverrideManager.delete(&dll).map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
     // --- System ---
