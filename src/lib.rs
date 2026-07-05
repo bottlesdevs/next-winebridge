@@ -54,6 +54,16 @@ fn path_info(path: &Path) -> Result<winebridge::PathInfo, Status> {
     })
 }
 
+fn required(value: &str, field: &str) -> Result<(), Status> {
+    if value.is_empty() || value.contains('\0') {
+        Err(Status::invalid_argument(format!(
+            "{field} must be non-empty and contain no NUL bytes"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 pub struct WineBridgeService {
     shutdown_signal: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -288,107 +298,81 @@ impl WineBridge for WineBridgeService {
 
     async fn list_services(
         &self,
-        _request: Request<winebridge::ListServicesRequest>,
+        _request: Request<()>,
     ) -> Result<Response<winebridge::ListServicesResponse>> {
-        let services = ServiceManager
-            .list_services()
-            .map_err(|e| Status::internal(format!("Failed to list services: {:?}", e)))?;
+        let services = ServiceManager.list_services().map_err(status::windows)?;
 
         let services = services
             .into_iter()
-            .map(|s| winebridge::ServiceInfo {
-                name: s.name,
-                display_name: s.display_name,
-                state: s.state as i32,
-                start_type: s.start_type as i32,
-            })
-            .collect();
+            .map(services::to_proto)
+            .collect::<Result<_, _>>()?;
 
         Ok(Response::new(winebridge::ListServicesResponse { services }))
     }
 
-    async fn get_service_status(
+    async fn get_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::ServiceStatusResponse>> {
+    ) -> Result<Response<winebridge::Service>> {
         let name = request.into_inner().name;
-        let state = ServiceManager
-            .get_status(&name)
-            .map_err(|e| Status::internal(format!("Failed to get service status: {:?}", e)))?;
+        required(&name, "service name")?;
 
-        Ok(Response::new(winebridge::ServiceStatusResponse {
-            name,
-            state: state as i32,
-        }))
+        Ok(Response::new(services::to_proto(
+            ServiceManager.get(&name).map_err(status::windows)?,
+        )?))
     }
 
     async fn start_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    ) -> Result<Response<()>> {
         let name = request.into_inner().name;
-        ServiceManager
-            .start(&name)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to start service: {:?}", e)))
+        required(&name, "service name")?;
+        ServiceManager.start(&name).map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
     async fn stop_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    ) -> Result<Response<()>> {
         let name = request.into_inner().name;
-        ServiceManager
-            .stop(&name)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to stop service: {:?}", e)))
+        required(&name, "service name")?;
+        ServiceManager.stop(&name).map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
     async fn create_service(
         &self,
         request: Request<winebridge::CreateServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    ) -> Result<Response<()>> {
         let input = request.into_inner();
+        required(&input.name, "service name")?;
+        required(&input.binary_path, "service binary path")?;
+        if input.display_name.contains('\0') {
+            return Err(Status::invalid_argument(
+                "service display name must contain no NUL bytes",
+            ));
+        }
         ServiceManager
             .create(
                 &input.name,
                 &input.display_name,
                 &input.binary_path,
-                input.start_type as u32,
+                services::start_type(input.start_type)?,
             )
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to create service: {:?}", e)))
+            .map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
     async fn delete_service(
         &self,
         request: Request<winebridge::ServiceRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
+    ) -> Result<Response<()>> {
         let name = request.into_inner().name;
-        ServiceManager
-            .delete(&name)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("Failed to delete service: {:?}", e)))
+        required(&name, "service name")?;
+        ServiceManager.delete(&name).map_err(status::windows)?;
+        Ok(Response::new(()))
     }
 
     // --- DLL Overrides ---
