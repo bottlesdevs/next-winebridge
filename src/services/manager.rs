@@ -58,18 +58,16 @@ impl ServiceManager {
         Ok(ServiceHandle(handle))
     }
 
-    fn query_start_type(&self, scm: &ScmHandle, name: &str) -> Result<u32, Error> {
-        let svc = Self::open_service(scm, name, SERVICE_QUERY_CONFIG)?;
-
+    fn query_config(service: &ServiceHandle) -> Result<(String, u32), Error> {
         let mut bytes_needed: u32 = 0;
         unsafe {
-            let _ = QueryServiceConfigW(svc.0, None, 0, &mut bytes_needed);
+            let _ = QueryServiceConfigW(service.0, None, 0, &mut bytes_needed);
         }
 
         let mut buf: Vec<u8> = vec![0u8; bytes_needed as usize];
         unsafe {
             QueryServiceConfigW(
-                svc.0,
+                service.0,
                 Some(buf.as_mut_ptr() as *mut QUERY_SERVICE_CONFIGW),
                 bytes_needed,
                 &mut bytes_needed,
@@ -77,7 +75,32 @@ impl ServiceManager {
         }
 
         let config = unsafe { &*(buf.as_ptr() as *const QUERY_SERVICE_CONFIGW) };
-        Ok(config.dwStartType.0)
+        Ok((
+            from_wide(PWSTR(config.lpDisplayName.0)),
+            config.dwStartType.0,
+        ))
+    }
+
+    fn query_start_type(&self, scm: &ScmHandle, name: &str) -> Result<u32, Error> {
+        let service = Self::open_service(scm, name, SERVICE_QUERY_CONFIG)?;
+        Ok(Self::query_config(&service)?.1)
+    }
+
+    fn query_status(service: &ServiceHandle) -> Result<u32, Error> {
+        let mut status = SERVICE_STATUS_PROCESS::default();
+        let mut bytes_needed: u32 = 0;
+        unsafe {
+            QueryServiceStatusEx(
+                service.0,
+                SC_STATUS_PROCESS_INFO,
+                Some(std::slice::from_raw_parts_mut(
+                    &mut status as *mut _ as *mut u8,
+                    std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
+                )),
+                &mut bytes_needed,
+            )?;
+        }
+        Ok(status.dwCurrentState.0)
     }
 
     pub fn list_services(&self) -> Result<Vec<ServiceInfo>, Error> {
@@ -126,7 +149,7 @@ impl ServiceManager {
             let name = from_wide(PWSTR(entry.lpServiceName.0));
             let display_name = from_wide(PWSTR(entry.lpDisplayName.0));
             let state = entry.ServiceStatusProcess.dwCurrentState.0;
-            let start_type = self.query_start_type(&scm, &name).unwrap_or(0);
+            let start_type = self.query_start_type(&scm, &name)?;
 
             result.push(ServiceInfo {
                 name,
@@ -139,26 +162,17 @@ impl ServiceManager {
         Ok(result)
     }
 
-    pub fn get_status(&self, name: &str) -> Result<u32, Error> {
+    pub fn get(&self, name: &str) -> Result<ServiceInfo, Error> {
         let scm = Self::open_scm(SC_MANAGER_CONNECT)?;
-        let svc = Self::open_service(&scm, name, SERVICE_QUERY_STATUS)?;
+        let service = Self::open_service(&scm, name, SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS)?;
+        let (display_name, start_type) = Self::query_config(&service)?;
 
-        let mut status = SERVICE_STATUS_PROCESS::default();
-        let mut bytes_needed: u32 = 0;
-
-        unsafe {
-            QueryServiceStatusEx(
-                svc.0,
-                SC_STATUS_PROCESS_INFO,
-                Some(std::slice::from_raw_parts_mut(
-                    &mut status as *mut _ as *mut u8,
-                    std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
-                )),
-                &mut bytes_needed,
-            )?;
-        }
-
-        Ok(status.dwCurrentState.0)
+        Ok(ServiceInfo {
+            name: name.to_string(),
+            display_name,
+            state: Self::query_status(&service)?,
+            start_type,
+        })
     }
 
     pub fn start(&self, name: &str) -> Result<(), Error> {
