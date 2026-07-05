@@ -1,6 +1,7 @@
 use bottles_core::proto::wine_bridge_server::WineBridgeServer;
 use bottles_winebridge::WineBridgeService;
 use tokio::sync::oneshot;
+use tonic_health::server::health_reporter;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -21,12 +22,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = oneshot::channel();
 
     let service = WineBridgeService::new(tx);
+    let (health_reporter, health_service) = health_reporter();
+    health_reporter
+        .set_serving::<WineBridgeServer<WineBridgeService>>()
+        .await;
     tracing::info!("WineBridge Agent listening on {}", addr);
 
     tonic::transport::Server::builder()
+        .add_service(health_service)
         .add_service(WineBridgeServer::new(service))
-        .serve_with_shutdown(addr, async {
+        .serve_with_shutdown(addr, async move {
             let _ = rx.await;
+            health_reporter
+                .set_not_serving::<WineBridgeServer<WineBridgeService>>()
+                .await;
             tracing::info!("Shutting down WineBridge Agent...");
         })
         .await?;
