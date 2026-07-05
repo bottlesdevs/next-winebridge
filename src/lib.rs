@@ -38,24 +38,6 @@ impl WineBridgeService {
 
 #[tonic::async_trait]
 impl WineBridge for WineBridgeService {
-    async fn health(
-        &self,
-        _request: Request<winebridge::BridgeHealthRequest>,
-    ) -> Result<Response<winebridge::BridgeHealthResponse>> {
-        Ok(Response::new(winebridge::BridgeHealthResponse { ok: true }))
-    }
-
-    async fn message(
-        &self,
-        request: Request<winebridge::MessageRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
-        let _ = request;
-        Ok(Response::new(winebridge::MessageResponse {
-            success: true,
-            error: None,
-        }))
-    }
-
     // --- Process Management ---
 
     async fn running_processes(
