@@ -1,64 +1,34 @@
+use bottles_core::proto::{DllOverride, DllOverrideMode};
+use windows::Win32::Foundation::ERROR_INVALID_DATA;
+use windows::core::{Error, HRESULT};
 use windows_registry::{CURRENT_USER, Key};
 
 const DLL_OVERRIDES_SUBKEY: &str = "Software\\Wine\\DllOverrides";
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum OverrideMode {
-    NativeBuiltin,
-    BuiltinNative,
-    Native,
-    Builtin,
-    Disabled,
+fn invalid_data() -> Error {
+    Error::from_hresult(HRESULT::from_win32(ERROR_INVALID_DATA.0))
 }
 
-impl OverrideMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            OverrideMode::NativeBuiltin => "native,builtin",
-            OverrideMode::BuiltinNative => "builtin,native",
-            OverrideMode::Native => "native",
-            OverrideMode::Builtin => "builtin",
-            OverrideMode::Disabled => "disabled",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s.trim().to_lowercase().as_str() {
-            "native,builtin" => OverrideMode::NativeBuiltin,
-            "builtin,native" => OverrideMode::BuiltinNative,
-            "native" => OverrideMode::Native,
-            "builtin" => OverrideMode::Builtin,
-            "disabled" | "" => OverrideMode::Disabled,
-            _ => OverrideMode::NativeBuiltin,
-        }
-    }
-
-    pub fn to_proto_i32(&self) -> i32 {
-        match self {
-            OverrideMode::NativeBuiltin => 0,
-            OverrideMode::BuiltinNative => 1,
-            OverrideMode::Native => 2,
-            OverrideMode::Builtin => 3,
-            OverrideMode::Disabled => 4,
-        }
-    }
-
-    pub fn from_proto_i32(v: i32) -> Self {
-        match v {
-            0 => OverrideMode::NativeBuiltin,
-            1 => OverrideMode::BuiltinNative,
-            2 => OverrideMode::Native,
-            3 => OverrideMode::Builtin,
-            4 => OverrideMode::Disabled,
-            _ => OverrideMode::NativeBuiltin,
-        }
+fn parse_mode(value: &str) -> windows_registry::Result<DllOverrideMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "native,builtin" => Ok(DllOverrideMode::NativeBuiltin),
+        "builtin,native" => Ok(DllOverrideMode::BuiltinNative),
+        "native" => Ok(DllOverrideMode::Native),
+        "builtin" => Ok(DllOverrideMode::Builtin),
+        "disabled" | "" => Ok(DllOverrideMode::Disabled),
+        _ => Err(invalid_data()),
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DllOverride {
-    pub dll: String,
-    pub mode: OverrideMode,
+fn mode_value(mode: DllOverrideMode) -> windows_registry::Result<&'static str> {
+    match mode {
+        DllOverrideMode::NativeBuiltin => Ok("native,builtin"),
+        DllOverrideMode::BuiltinNative => Ok("builtin,native"),
+        DllOverrideMode::Native => Ok("native"),
+        DllOverrideMode::Builtin => Ok("builtin"),
+        DllOverrideMode::Disabled => Ok("disabled"),
+        DllOverrideMode::Unspecified => Err(invalid_data()),
+    }
 }
 
 pub struct DllOverrideManager;
@@ -73,38 +43,42 @@ impl DllOverrideManager {
     }
 
     pub fn list(&self) -> windows_registry::Result<Vec<DllOverride>> {
-        let key = Self::open_key()?;
-
-        let overrides = key
+        Self::open_key()?
             .values()?
-            .filter_map(|(name, _)| {
-                key.get_string(&name).ok().map(|s| DllOverride {
-                    dll: name,
-                    mode: OverrideMode::from_str(&s),
+            .map(|(dll, value)| {
+                Ok(DllOverride {
+                    dll,
+                    mode: parse_mode(&String::try_from(value)?)? as i32,
                 })
             })
-            .collect();
-
-        Ok(overrides)
+            .collect()
     }
 
     pub fn get(&self, dll: &str) -> windows_registry::Result<DllOverride> {
-        let key = Self::open_key()?;
-        let mode_str = key.get_string(dll)?;
-
+        let mode = parse_mode(&Self::open_key()?.get_string(dll)?)?;
         Ok(DllOverride {
             dll: dll.to_string(),
-            mode: OverrideMode::from_str(&mode_str),
+            mode: mode as i32,
         })
     }
 
-    pub fn set(&self, dll: &str, mode: OverrideMode) -> windows_registry::Result<()> {
-        let key = Self::ensure_key()?;
-        key.set_string(dll, mode.as_str())
+    pub fn set(&self, dll: &str, mode: DllOverrideMode) -> windows_registry::Result<()> {
+        Self::ensure_key()?.set_string(dll, mode_value(mode)?)
     }
 
     pub fn delete(&self, dll: &str) -> windows_registry::Result<()> {
-        let key = Self::open_key()?;
-        key.remove_value(dll)
+        Self::open_key()?.remove_value(dll)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_only_known_override_modes() {
+        assert_eq!(parse_mode("native").unwrap(), DllOverrideMode::Native);
+        assert!(parse_mode("unexpected").is_err());
+        assert!(mode_value(DllOverrideMode::Unspecified).is_err());
     }
 }
