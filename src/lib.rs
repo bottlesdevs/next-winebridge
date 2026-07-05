@@ -6,7 +6,7 @@ mod services;
 use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::{DllOverrideManager, OverrideMode};
 use processes::{manager::ProcessManager, process::ProcessIdentifier};
-use registry::manager::{KeyExtension, RegistryManager, to_proto_reg_val, to_reg_data};
+use registry::operations;
 use services::manager::ServiceManager;
 use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -113,134 +113,65 @@ impl WineBridge for WineBridgeService {
 
     async fn create_registry_key(
         &self,
-        request: Request<winebridge::CreateRegistryKeyRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
-        let input = request.get_ref();
-        let hive = registry::hive(input.hive)?;
-        let subkey = Path::new(&input.subkey);
-
-        RegistryManager
-            .create_key(hive, subkey)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("{:?}", e)))
+        request: Request<winebridge::RegistryKeyRequest>,
+    ) -> Result<Response<()>> {
+        let input = request.into_inner();
+        operations::create_key(input.hive, &input.subkey)?;
+        Ok(Response::new(()))
     }
 
-    async fn delete_registry_key(
+    async fn delete_registry_tree(
         &self,
-        request: Request<winebridge::DeleteRegistryKeyRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
-        let input = request.get_ref();
-        let hive = registry::hive(input.hive)?;
-        let subkey = Path::new(&input.subkey);
-
-        RegistryManager
-            .delete_key(hive, subkey)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("{:?}", e)))
+        request: Request<winebridge::RegistryKeyRequest>,
+    ) -> Result<Response<()>> {
+        let input = request.into_inner();
+        operations::delete_tree(input.hive, &input.subkey)?;
+        Ok(Response::new(()))
     }
 
     async fn get_registry_key(
         &self,
-        request: Request<winebridge::GetRegistryKeyRequest>,
-    ) -> Result<Response<winebridge::RegistryKey>> {
-        let input = request.get_ref();
-        let hive = registry::hive(input.hive)?;
-        let subkey = Path::new(&input.subkey);
-
-        let key = RegistryManager
-            .key(hive, subkey)
-            .map_err(|e| Status::internal(format!("{:?}", e)))?
-            .as_registry_key(hive, subkey)
-            .map_err(Status::internal)?;
-
-        Ok(Response::new(key))
-    }
-
-    async fn get_registry_key_value(
-        &self,
         request: Request<winebridge::RegistryKeyRequest>,
-    ) -> Result<Response<winebridge::RegistryValue>> {
-        let input = request.get_ref();
-        let hive = registry::hive(input.hive)?;
-        let subkey = Path::new(&input.subkey);
-
-        let key = RegistryManager
-            .key(hive, subkey)
-            .map_err(|e| Status::internal(format!("{:?}", e)))?;
-
-        let value = key
-            .value(&input.name)
-            .map_err(|e| Status::internal(format!("{:?}", e)))?;
-
-        Ok(Response::new(
-            to_proto_reg_val(value).map_err(Status::internal)?,
-        ))
+    ) -> Result<Response<winebridge::RegistryKey>> {
+        let input = request.into_inner();
+        Ok(Response::new(operations::get_key(
+            input.hive,
+            &input.subkey,
+        )?))
     }
 
-    async fn set_registry_key_value(
+    async fn get_registry_value(
         &self,
-        request: Request<winebridge::SetRegistryKeyValueRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
-        let input = request.get_ref();
-        let key_req = input
-            .key
-            .as_ref()
-            .ok_or(Status::invalid_argument("Missing key"))?;
-        let hive = registry::hive(key_req.hive)?;
-        let subkey = Path::new(&key_req.subkey);
+        request: Request<winebridge::RegistryValueRequest>,
+    ) -> Result<Response<winebridge::RegistryValue>> {
+        let input = request.into_inner();
+        Ok(Response::new(operations::get_value(
+            input.hive,
+            &input.subkey,
+            &input.name,
+        )?))
+    }
 
-        let key = RegistryManager
-            .key(hive, subkey)
-            .map_err(|e| Status::internal(format!("{:?}", e)))?;
-
+    async fn set_registry_value(
+        &self,
+        request: Request<winebridge::SetRegistryValueRequest>,
+    ) -> Result<Response<()>> {
+        let input = request.into_inner();
         let value = input
             .value
-            .as_ref()
-            .ok_or(Status::invalid_argument("Missing value"))?;
-        let value = value
-            .value
-            .clone()
-            .ok_or(Status::invalid_argument("Missing registry value"))?;
-
-        key.create_value(&key_req.name, to_reg_data(value))
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("{:?}", e)))
+            .and_then(|value| value.value)
+            .ok_or_else(|| Status::invalid_argument("registry value is required"))?;
+        operations::set_value(input.hive, &input.subkey, &input.name, value)?;
+        Ok(Response::new(()))
     }
 
-    async fn delete_registry_key_value(
+    async fn delete_registry_value(
         &self,
-        request: Request<winebridge::RegistryKeyRequest>,
-    ) -> Result<Response<winebridge::MessageResponse>> {
-        let input = request.get_ref();
-        let hive = registry::hive(input.hive)?;
-        let subkey = Path::new(&input.subkey);
-
-        RegistryManager
-            .key(hive, subkey)
-            .map_err(|e| Status::internal(format!("{:?}", e)))?
-            .remove_value(&input.name)
-            .map(|_| {
-                Response::new(winebridge::MessageResponse {
-                    success: true,
-                    error: None,
-                })
-            })
-            .map_err(|e| Status::internal(format!("{:?}", e)))
+        request: Request<winebridge::RegistryValueRequest>,
+    ) -> Result<Response<()>> {
+        let input = request.into_inner();
+        operations::delete_value(input.hive, &input.subkey, &input.name)?;
+        Ok(Response::new(()))
     }
 
     // --- File System (New) ---

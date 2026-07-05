@@ -1,9 +1,4 @@
-use std::path::Path;
-use windows_registry::Key;
-
-use bottles_core::RegistryHive;
-
-use crate::registry::manager::{Data, KeyExtension, RegistryManager};
+use windows_registry::{CURRENT_USER, Key};
 
 const DLL_OVERRIDES_SUBKEY: &str = "Software\\Wine\\DllOverrides";
 
@@ -69,16 +64,12 @@ pub struct DllOverride {
 pub struct DllOverrideManager;
 
 impl DllOverrideManager {
-    fn subkey() -> &'static Path {
-        Path::new(DLL_OVERRIDES_SUBKEY)
-    }
-
     fn open_key() -> windows_registry::Result<Key> {
-        RegistryManager.key(RegistryHive::CurrentUser, Self::subkey())
+        CURRENT_USER.open(DLL_OVERRIDES_SUBKEY)
     }
 
     fn ensure_key() -> windows_registry::Result<Key> {
-        RegistryManager.create_key(RegistryHive::CurrentUser, Self::subkey())
+        CURRENT_USER.create(DLL_OVERRIDES_SUBKEY)
     }
 
     pub fn list(&self) -> windows_registry::Result<Vec<DllOverride>> {
@@ -109,7 +100,7 @@ impl DllOverrideManager {
 
     pub fn set(&self, dll: &str, mode: OverrideMode) -> windows_registry::Result<()> {
         let key = Self::ensure_key()?;
-        KeyExtension::create_value(&key, dll, Data::String(mode.as_str().to_string()))
+        key.set_string(dll, mode.as_str())
     }
 
     pub fn delete(&self, dll: &str) -> windows_registry::Result<()> {
