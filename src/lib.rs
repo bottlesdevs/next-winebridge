@@ -2,6 +2,7 @@ mod dll_overrides;
 mod processes;
 mod registry;
 mod services;
+mod status;
 
 use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::{DllOverrideManager, OverrideMode};
@@ -40,13 +41,13 @@ impl WineBridgeService {
 impl WineBridge for WineBridgeService {
     // --- Process Management ---
 
-    async fn running_processes(
+    async fn list_processes(
         &self,
-        _request: Request<winebridge::RunningProcessesRequest>,
-    ) -> Result<Response<winebridge::RunningProcessesResponse>> {
+        _request: Request<()>,
+    ) -> Result<Response<winebridge::ListProcessesResponse>> {
         let processes = ProcessManager
             .running_processes()
-            .map_err(|e| Status::internal(format!("Failed to get running processes: {:?}", e)))?;
+            .map_err(status::windows)?;
 
         let processes = processes
             .iter()
@@ -57,38 +58,53 @@ impl WineBridge for WineBridgeService {
             })
             .collect();
 
-        Ok(Response::new(winebridge::RunningProcessesResponse {
+        Ok(Response::new(winebridge::ListProcessesResponse {
             processes,
         }))
     }
 
-    async fn create_process(
+    async fn launch_process(
         &self,
-        request: Request<winebridge::CreateProcessRequest>,
-    ) -> Result<Response<winebridge::CreateProcessResponse>> {
-        let pid = ProcessManager
-            .execute(request.into_inner())
-            .map_err(|e| Status::internal(format!("Failed to execute process: {:?}", e)))?;
+        request: Request<winebridge::LaunchProcessRequest>,
+    ) -> Result<Response<winebridge::LaunchProcessResponse>> {
+        let input = request.into_inner();
+        if input.executable.is_empty()
+            || input.executable.contains('\0')
+            || input
+                .arguments
+                .iter()
+                .any(|argument| argument.contains('\0'))
+            || input
+                .working_directory
+                .as_deref()
+                .is_some_and(|directory| directory.contains('\0'))
+        {
+            return Err(Status::invalid_argument(
+                "process paths and arguments must be non-empty where required and contain no NUL bytes",
+            ));
+        }
 
-        Ok(Response::new(winebridge::CreateProcessResponse { pid }))
+        let pid = ProcessManager.execute(input).map_err(status::windows)?;
+
+        Ok(Response::new(winebridge::LaunchProcessResponse { pid }))
     }
 
     async fn kill_process(
         &self,
         request: Request<winebridge::KillProcessRequest>,
-    ) -> Result<Response<winebridge::KillProcessResponse>> {
+    ) -> Result<Response<()>> {
         let pid = request.get_ref().pid;
+        if pid == 0 {
+            return Err(Status::invalid_argument("process id must be non-zero"));
+        }
         let process = ProcessManager
             .process(ProcessIdentifier::Pid(pid))
+            .map_err(status::windows)?
             .ok_or_else(|| Status::not_found("Process not found"))?;
 
-        process
-            .kill()
-            .map_err(|e| Status::internal(format!("Failed to kill process: {:?}", e)))?;
+        process.kill().map_err(status::windows)?;
 
-        Ok(Response::new(winebridge::KillProcessResponse {
-            success: true,
-        }))
+        Ok(Response::new(()))
     }
 
     // --- Registry Management ---

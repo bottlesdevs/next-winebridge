@@ -1,29 +1,27 @@
 use bottles_core::proto::{self as winebridge, RegistryHive, registry_value::Value as ProtoValue};
 use tonic::Status;
-use windows::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_DATA, ERROR_PATH_NOT_FOUND,
-};
-use windows::core::{Error, HRESULT};
 use windows_registry::{
     CLASSES_ROOT, CURRENT_CONFIG, CURRENT_USER, Key, LOCAL_MACHINE, Type, USERS, Value,
 };
 
+use crate::status;
+
 pub fn create_key(hive: i32, subkey: &str) -> Result<(), Status> {
     let root = resolve_root(hive, subkey)?;
-    root.create(subkey).map(drop).map_err(status)
+    root.create(subkey).map(drop).map_err(status::windows)
 }
 
 pub fn delete_tree(hive: i32, subkey: &str) -> Result<(), Status> {
     let root = resolve_root(hive, subkey)?;
-    root.remove_tree(subkey).map_err(status)
+    root.remove_tree(subkey).map_err(status::windows)
 }
 
 pub fn get_key(hive: i32, subkey: &str) -> Result<winebridge::RegistryKey, Status> {
     let root = resolve_root(hive, subkey)?;
-    let key = root.open(subkey).map_err(status)?;
+    let key = root.open(subkey).map_err(status::windows)?;
     let values = key
         .values()
-        .map_err(status)?
+        .map_err(status::windows)?
         .map(|(name, value)| {
             Ok(winebridge::RegistryKeyValue {
                 name,
@@ -44,16 +42,16 @@ pub fn get_value(hive: i32, subkey: &str, name: &str) -> Result<winebridge::Regi
     let root = resolve_root(hive, subkey)?;
     to_proto(
         root.open(subkey)
-            .map_err(status)?
+            .map_err(status::windows)?
             .get_value(name)
-            .map_err(status)?,
+            .map_err(status::windows)?,
     )
 }
 
 pub fn set_value(hive: i32, subkey: &str, name: &str, value: ProtoValue) -> Result<(), Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
-    let key = root.open(subkey).map_err(status)?;
+    let key = root.open(subkey).map_err(status::windows)?;
 
     match value {
         ProtoValue::None(value) => key.set_bytes(name, Type::Other(0), &value),
@@ -82,16 +80,16 @@ pub fn set_value(hive: i32, subkey: &str, name: &str, value: ProtoValue) -> Resu
             key.set_multi_string(name, &values)
         }
     }
-    .map_err(status)
+    .map_err(status::windows)
 }
 
 pub fn delete_value(hive: i32, subkey: &str, name: &str) -> Result<(), Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
     root.open(subkey)
-        .map_err(status)?
+        .map_err(status::windows)?
         .remove_value(name)
-        .map_err(status)
+        .map_err(status::windows)
 }
 
 fn resolve_root(hive: i32, subkey: &str) -> Result<&'static Key, Status> {
@@ -138,10 +136,12 @@ fn validate_string(value: &str) -> Result<(), Status> {
 fn to_proto(value: Value) -> Result<winebridge::RegistryValue, Status> {
     let value = match value.ty() {
         Type::Bytes => ProtoValue::Binary(value.to_vec()),
-        Type::U32 => ProtoValue::Dword(u32::try_from(value).map_err(status)?),
-        Type::U64 => ProtoValue::Qword(u64::try_from(value).map_err(status)?),
-        Type::String => ProtoValue::String(String::try_from(value).map_err(status)?),
-        Type::ExpandString => ProtoValue::ExpandString(String::try_from(value).map_err(status)?),
+        Type::U32 => ProtoValue::Dword(u32::try_from(value).map_err(status::windows)?),
+        Type::U64 => ProtoValue::Qword(u64::try_from(value).map_err(status::windows)?),
+        Type::String => ProtoValue::String(String::try_from(value).map_err(status::windows)?),
+        Type::ExpandString => {
+            ProtoValue::ExpandString(String::try_from(value).map_err(status::windows)?)
+        }
         Type::MultiString => {
             if !value.len().is_multiple_of(2) {
                 return Err(Status::data_loss(
@@ -177,21 +177,6 @@ fn to_proto(value: Value) -> Result<winebridge::RegistryValue, Status> {
     Ok(winebridge::RegistryValue { value: Some(value) })
 }
 
-fn status(error: Error) -> Status {
-    let code = error.code();
-    if code == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
-        || code == HRESULT::from_win32(ERROR_PATH_NOT_FOUND.0)
-    {
-        Status::not_found(error.to_string())
-    } else if code == HRESULT::from_win32(ERROR_ACCESS_DENIED.0) {
-        Status::permission_denied(error.to_string())
-    } else if code == HRESULT::from_win32(ERROR_INVALID_DATA.0) {
-        Status::data_loss(error.to_string())
-    } else {
-        Status::internal(error.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,17 +200,6 @@ mod tests {
             validate_name("bad\0name").unwrap_err().code(),
             Code::InvalidArgument
         );
-    }
-
-    #[test]
-    fn maps_common_windows_errors() {
-        let error = |code| Error::from_hresult(HRESULT::from_win32(code));
-        assert_eq!(status(error(ERROR_FILE_NOT_FOUND.0)).code(), Code::NotFound);
-        assert_eq!(
-            status(error(ERROR_ACCESS_DENIED.0)).code(),
-            Code::PermissionDenied
-        );
-        assert_eq!(status(error(ERROR_INVALID_DATA.0)).code(), Code::DataLoss);
     }
 
     #[test]

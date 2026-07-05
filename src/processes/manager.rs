@@ -21,24 +21,22 @@ impl ProcessManager {
         Ok(snapshot.collect())
     }
 
-    pub fn process(&self, identifier: ProcessIdentifier) -> Option<Process> {
-        let processes = self
-            .running_processes()
-            .expect("Failed to get running processes");
+    pub fn process(&self, identifier: ProcessIdentifier) -> Result<Option<Process>, Error> {
+        let processes = self.running_processes()?;
 
-        match identifier {
+        Ok(match identifier {
             ProcessIdentifier::Name(name) => processes
                 .iter()
                 .find(|p| p.name().to_lowercase() == name.to_lowercase())
                 .cloned(),
             ProcessIdentifier::Pid(pid) => processes.iter().find(|p| p.pid() == pid).cloned(),
-        }
+        })
     }
 
-    pub fn execute(&self, request: winebridge::CreateProcessRequest) -> Result<u32, Error> {
-        let executable = PathBuf::from(request.command);
+    pub fn execute(&self, request: winebridge::LaunchProcessRequest) -> Result<u32, Error> {
+        let executable = PathBuf::from(request.executable);
         let command_line = std::iter::once(executable.display().to_string())
-            .chain(request.args)
+            .chain(request.arguments)
             .collect::<Vec<_>>()
             .join(" ");
 
@@ -46,13 +44,13 @@ impl ProcessManager {
         let mut command_line = to_wide_string(command_line);
         // Keep the wide-encoded working directory alive for the whole CreateProcessW
         // call: the PCWSTR below borrows this buffer, so it must outlive the call.
-        let work_dir_w = request.work_dir.map(to_wide_string);
+        let work_dir_w = request.working_directory.map(to_wide_string);
         let work_dir = work_dir_w
             .as_ref()
             .map(|work_dir| PCWSTR(work_dir.as_ptr()))
             .unwrap_or_else(PCWSTR::null);
 
-        let flags = if request.terminal {
+        let flags = if request.new_console {
             CREATE_NEW_CONSOLE
         } else {
             PROCESS_CREATION_FLAGS(0)
