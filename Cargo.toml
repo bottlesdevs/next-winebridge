@@ -13,7 +13,7 @@ exclude.workspace = true
 readme.workspace = true
 
 [dependencies]
-bottles-core = { path = "../next-core" }
+bottles-core.workspace = true
 tonic.workspace = true
 tonic-health.workspace = true
 tokio.workspace = true
