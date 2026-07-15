@@ -6,7 +6,7 @@ mod status;
 
 use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::DllOverrideManager;
-use processes::{manager::ProcessManager, process::ProcessIdentifier};
+use processes::manager::ProcessManager;
 use registry::operations;
 use services::manager::ServiceManager;
 use std::ffi::OsString;
@@ -120,7 +120,9 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::LaunchProcessRequest>,
     ) -> Result<Response<winebridge::LaunchProcessResponse>> {
         let input = request.into_inner();
-        if input.executable.is_empty()
+        if input.id.is_empty()
+            || input.id.contains('\0')
+            || input.executable.is_empty()
             || input.executable.contains('\0')
             || input
                 .arguments
@@ -145,16 +147,13 @@ impl WineBridge for WineBridgeService {
         &self,
         request: Request<winebridge::KillProcessRequest>,
     ) -> Result<Response<()>> {
-        let pid = request.get_ref().pid;
-        if pid == 0 {
-            return Err(Status::invalid_argument("process id must be non-zero"));
+        let id = &request.get_ref().id;
+        if id.is_empty() || id.contains('\0') {
+            return Err(Status::invalid_argument(
+                "program id must be non-empty and contain no NUL bytes",
+            ));
         }
-        let process = ProcessManager
-            .process(ProcessIdentifier::Pid(pid))
-            .map_err(status::windows)?
-            .ok_or_else(|| Status::not_found("Process not found"))?;
-
-        process.kill().map_err(status::windows)?;
+        ProcessManager.kill(id).map_err(status::windows)?;
 
         Ok(Response::new(()))
     }
