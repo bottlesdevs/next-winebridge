@@ -1,19 +1,18 @@
-use std::ffi::OsString;
-use std::os::windows::ffi::OsStringExt;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
-};
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_INFORMATION, PROCESS_TERMINATE, TerminateProcess,
-};
-use windows::core::Error;
+use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 
-#[allow(dead_code)]
-pub enum ProcessIdentifier {
-    Name(String),
-    Pid(u32),
-}
+use windows::{
+    Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+                TH32CS_SNAPPROCESS,
+            },
+            Threading::PROCESS_INFORMATION,
+        },
+    },
+    core::Error,
+};
 
 #[derive(Default)]
 pub struct ProcessInfo(pub PROCESS_INFORMATION);
@@ -21,33 +20,8 @@ pub struct ProcessInfo(pub PROCESS_INFORMATION);
 impl Drop for ProcessInfo {
     fn drop(&mut self) {
         unsafe {
-            CloseHandle(self.0.hProcess).ok();
-            CloseHandle(self.0.hThread).ok();
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub enum PriorityClass {
-    Idle = 0x00000040,
-    BelowNormal = 0x00004000,
-    Normal = 0x00000020,
-    AboveNormal = 0x00008000,
-    High = 0x00000080,
-    Realtime = 0x00000100,
-}
-
-#[allow(dead_code)]
-impl PriorityClass {
-    fn from(value: i32) -> Self {
-        match value {
-            0x00000040 => PriorityClass::Idle,
-            0x00004000 => PriorityClass::BelowNormal,
-            0x00000020 => PriorityClass::Normal,
-            0x00008000 => PriorityClass::AboveNormal,
-            0x00000080 => PriorityClass::High,
-            0x00000100 => PriorityClass::Realtime,
-            _ => panic!("Invalid priority class"),
+            let _ = CloseHandle(self.0.hProcess);
+            let _ = CloseHandle(self.0.hThread);
         }
     }
 }
@@ -55,13 +29,6 @@ impl PriorityClass {
 #[derive(Debug, Clone)]
 pub struct Process(PROCESSENTRY32W);
 
-impl From<PROCESSENTRY32W> for Process {
-    fn from(entry: PROCESSENTRY32W) -> Self {
-        Self(entry)
-    }
-}
-
-#[allow(dead_code)]
 impl Process {
     pub fn name(&self) -> String {
         let len = self
@@ -83,20 +50,6 @@ impl Process {
     pub fn thread_count(&self) -> u32 {
         self.0.cntThreads
     }
-
-    pub fn parent_pid(&self) -> u32 {
-        self.0.th32ParentProcessID
-    }
-
-    pub fn priority_class(&self) -> PriorityClass {
-        PriorityClass::from(self.0.pcPriClassBase)
-    }
-
-    pub fn kill(&self) -> Result<(), Error> {
-        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, self.pid())? };
-
-        unsafe { TerminateProcess(handle, 0) }
-    }
 }
 
 pub struct ProcessSnapshot {
@@ -106,10 +59,8 @@ pub struct ProcessSnapshot {
 
 impl ProcessSnapshot {
     pub fn new() -> Result<Self, Error> {
-        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }?;
-
         Ok(Self {
-            handle: snapshot,
+            handle: unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }?,
             initialized: false,
         })
     }
@@ -131,12 +82,14 @@ impl Iterator for ProcessSnapshot {
             unsafe { Process32NextW(self.handle, &mut entry) }.ok()?;
         }
 
-        Some(Process::from(entry))
+        Some(Process(entry))
     }
 }
 
 impl Drop for ProcessSnapshot {
     fn drop(&mut self) {
-        unsafe { CloseHandle(self.handle).ok() };
+        unsafe {
+            let _ = CloseHandle(self.handle);
+        }
     }
 }

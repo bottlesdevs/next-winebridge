@@ -1,9 +1,17 @@
-use super::process::{Process, ProcessIdentifier, ProcessInfo, ProcessSnapshot};
-use bottles_core::proto as winebridge;
 use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::PathBuf};
+
+use super::process::{Process, ProcessInfo, ProcessSnapshot};
+use bottles_core::proto as winebridge;
 use windows::{
-    Win32::System::Threading::{
-        CREATE_NEW_CONSOLE, CreateProcessW, PROCESS_CREATION_FLAGS, STARTUPINFOW,
+    Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::{
+            JobObjects::{AssignProcessToJobObject, CreateJobObjectW, TerminateJobObject},
+            Threading::{
+                CREATE_NEW_CONSOLE, CREATE_SUSPENDED, CreateProcessW, PROCESS_CREATION_FLAGS,
+                ResumeThread, STARTUPINFOW, TerminateProcess,
+            },
+        },
     },
     core::{Error, PCWSTR, PWSTR},
 };
@@ -12,28 +20,34 @@ fn to_wide_string(s: impl AsRef<OsStr>) -> Vec<u16> {
     s.as_ref().encode_wide().chain(Some(0)).collect()
 }
 
+struct Job(HANDLE);
+
+impl Job {
+    fn open(id: &str) -> Result<Self, Error> {
+        let name = to_wide_string(id);
+        Ok(Self(unsafe {
+            CreateJobObjectW(None, PCWSTR(name.as_ptr()))?
+        }))
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
 pub struct ProcessManager;
 
 impl ProcessManager {
     pub fn running_processes(&self) -> Result<Vec<Process>, Error> {
-        let snapshot = ProcessSnapshot::new()?;
-
-        Ok(snapshot.collect())
-    }
-
-    pub fn process(&self, identifier: ProcessIdentifier) -> Result<Option<Process>, Error> {
-        let processes = self.running_processes()?;
-
-        Ok(match identifier {
-            ProcessIdentifier::Name(name) => processes
-                .iter()
-                .find(|p| p.name().to_lowercase() == name.to_lowercase())
-                .cloned(),
-            ProcessIdentifier::Pid(pid) => processes.iter().find(|p| p.pid() == pid).cloned(),
-        })
+        Ok(ProcessSnapshot::new()?.collect())
     }
 
     pub fn execute(&self, request: winebridge::LaunchProcessRequest) -> Result<u32, Error> {
+        let job = Job::open(&request.id)?;
         let executable = PathBuf::from(request.executable);
         let command_line = std::iter::once(executable.display().to_string())
             .chain(request.arguments)
@@ -49,13 +63,12 @@ impl ProcessManager {
             .as_ref()
             .map(|work_dir| PCWSTR(work_dir.as_ptr()))
             .unwrap_or_else(PCWSTR::null);
-
-        let flags = if request.new_console {
-            CREATE_NEW_CONSOLE
-        } else {
-            PROCESS_CREATION_FLAGS(0)
-        };
-
+        let flags = CREATE_SUSPENDED
+            | if request.new_console {
+                CREATE_NEW_CONSOLE
+            } else {
+                PROCESS_CREATION_FLAGS(0)
+            };
         let startup_info = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,
             ..Default::default()
@@ -75,8 +88,23 @@ impl ProcessManager {
                 &startup_info,
                 &mut process_info.0,
             )?;
+
+            if let Err(error) = AssignProcessToJobObject(job.0, process_info.0.hProcess) {
+                let _ = TerminateProcess(process_info.0.hProcess, 1);
+                return Err(error);
+            }
+            if ResumeThread(process_info.0.hThread) == u32::MAX {
+                let error = Error::from_thread();
+                let _ = TerminateProcess(process_info.0.hProcess, 1);
+                return Err(error);
+            }
         }
 
         Ok(process_info.0.dwProcessId)
+    }
+
+    pub fn kill(&self, id: &str) -> Result<(), Error> {
+        let job = Job::open(id)?;
+        unsafe { TerminateJobObject(job.0, 0) }
     }
 }
