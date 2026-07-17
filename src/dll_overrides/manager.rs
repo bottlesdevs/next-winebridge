@@ -67,7 +67,11 @@ impl DllOverrideManager {
     }
 
     pub fn delete(&self, dll: &str) -> windows_registry::Result<()> {
-        Self::open_key()?.remove_value(dll)
+        CURRENT_USER
+            .options()
+            .write()
+            .open(DLL_OVERRIDES_SUBKEY)?
+            .remove_value(dll)
     }
 }
 
