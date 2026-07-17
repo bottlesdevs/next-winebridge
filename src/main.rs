@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use bottles_core::proto::wine_bridge_server::WineBridgeServer;
 use bottles_winebridge::WineBridgeService;
 use std::{fs, io, net::SocketAddr, path::PathBuf};
