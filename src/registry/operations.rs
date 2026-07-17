@@ -51,7 +51,11 @@ pub fn get_value(hive: i32, subkey: &str, name: &str) -> Result<winebridge::Regi
 pub fn set_value(hive: i32, subkey: &str, name: &str, value: ProtoValue) -> Result<(), Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
-    let key = root.open(subkey).map_err(status::windows)?;
+    let key = root
+        .options()
+        .write()
+        .open(subkey)
+        .map_err(status::windows)?;
 
     match value {
         ProtoValue::None(value) => key.set_bytes(name, Type::Other(0), &value),
@@ -86,7 +90,9 @@ pub fn set_value(hive: i32, subkey: &str, name: &str, value: ProtoValue) -> Resu
 pub fn delete_value(hive: i32, subkey: &str, name: &str) -> Result<(), Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
-    root.open(subkey)
+    root.options()
+        .write()
+        .open(subkey)
         .map_err(status::windows)?
         .remove_value(name)
         .map_err(status::windows)
