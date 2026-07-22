@@ -33,6 +33,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health_reporter
         .set_serving::<WineBridgeServer<WineBridgeService>>()
         .await;
+    if let Some(parent) = port_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let pending_port_file = port_file.with_extension("tmp");
     fs::write(&pending_port_file, addr.port().to_string())?;
     if let Err(error) = fs::rename(&pending_port_file, &port_file) {
