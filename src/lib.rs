@@ -4,8 +4,8 @@ mod registry;
 mod services;
 mod status;
 
-use bottles_core::proto::{self as winebridge, wine_bridge_server::WineBridge};
 use dll_overrides::manager::DllOverrideManager;
+use next_proto::winebridge::{self, wine_bridge_server::WineBridge};
 use processes::manager::ProcessManager;
 use registry::operations;
 use services::manager::ServiceManager;

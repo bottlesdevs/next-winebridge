@@ -1,7 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use bottles_core::proto::wine_bridge_server::WineBridgeServer;
 use bottles_winebridge::WineBridgeService;
+use next_proto::winebridge::wine_bridge_server::WineBridgeServer;
 use std::{fs, io, net::SocketAddr, path::PathBuf};
 use tokio::sync::oneshot;
 use tonic::transport::server::TcpIncoming;

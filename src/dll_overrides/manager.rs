@@ -1,4 +1,4 @@
-use bottles_core::proto::{DllOverride, DllOverrideMode};
+use next_proto::winebridge::{DllOverride, DllOverrideMode};
 use windows::Win32::Foundation::ERROR_INVALID_DATA;
 use windows::core::{Error, HRESULT};
 use windows_registry::{CURRENT_USER, Key};

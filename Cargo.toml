@@ -13,14 +13,17 @@ exclude.workspace = true
 readme.workspace = true
 
 [dependencies]
-bottles-core.workspace = true
+next-proto.workspace = true
 tonic.workspace = true
 tonic-health.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
+
+[target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = [
     "Win32_Security",
@@ -33,6 +36,3 @@ features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
 ]
-
-[dependencies.windows-registry]
-version = "0.6"

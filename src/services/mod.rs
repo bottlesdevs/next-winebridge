@@ -1,6 +1,6 @@
 pub mod manager;
 
-use bottles_core::proto as winebridge;
+use next_proto::winebridge;
 use tonic::Status;
 use windows::Win32::System::Services::{
     SERVICE_AUTO_START, SERVICE_BOOT_START, SERVICE_DEMAND_START, SERVICE_DISABLED,

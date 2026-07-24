@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::PathBuf};
 
 use super::process::{Process, ProcessInfo, ProcessSnapshot};
-use bottles_core::proto as winebridge;
+use next_proto::winebridge;
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE},

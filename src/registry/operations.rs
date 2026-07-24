@@ -1,4 +1,4 @@
-use bottles_core::proto::{self as winebridge, RegistryHive, registry_value::Value as ProtoValue};
+use next_proto::winebridge::{self, RegistryHive, registry_value::Value as ProtoValue};
 use tonic::Status;
 use windows_registry::{
     CLASSES_ROOT, CURRENT_CONFIG, CURRENT_USER, Key, LOCAL_MACHINE, Type, USERS, Value,
