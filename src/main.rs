@@ -8,6 +8,23 @@ use tonic::transport::server::TcpIncoming;
 use tonic_health::server::health_reporter;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(windows)]
+fn acquire_instance()
+-> windows::core::Result<Option<windows::core::Owned<windows::Win32::Foundation::HANDLE>>> {
+    use windows::{
+        Win32::{
+            Foundation::{ERROR_ALREADY_EXISTS, GetLastError},
+            System::Threading::CreateMutexW,
+        },
+        core::{Owned, w},
+    };
+
+    let handle = unsafe { CreateMutexW(None, true, w!("BottlesNextWineBridge"))? };
+    let already_exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+    let handle = unsafe { Owned::new(handle) };
+    Ok((!already_exists).then_some(handle))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -16,6 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| EnvFilter::new("bottles_winebridge=trace")),
         )
         .init();
+
+    #[cfg(windows)]
+    let Some(_instance) = acquire_instance()? else {
+        return Ok(());
+    };
 
     let port_file = PathBuf::from(std::env::var_os("WINEBRIDGE_PORT_FILE").ok_or_else(|| {
         io::Error::new(
