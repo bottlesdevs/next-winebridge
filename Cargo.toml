@@ -16,7 +16,7 @@ readme.workspace = true
 next-proto.workspace = true
 tonic.workspace = true
 tonic-health.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
 
