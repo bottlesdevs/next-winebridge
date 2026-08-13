@@ -4,9 +4,15 @@ use bottles_winebridge::WineBridgeService;
 use next_proto::winebridge::wine_bridge_server::WineBridgeServer;
 use std::{fs, io, net::SocketAddr, path::PathBuf};
 use tokio::sync::oneshot;
-use tonic::transport::server::TcpIncoming;
 use tonic_health::server::health_reporter;
 use tracing_subscriber::EnvFilter;
+
+mod transport;
+use transport::Incoming;
+
+/// Set by next-core when the runner's Wine cannot poll sockets, so `main`
+/// binds the blocking transport instead of the normal tokio one.
+const BLOCKING_TRANSPORT_ENV: &str = "WINEBRIDGE_BLOCKING_TRANSPORT";
 
 #[cfg(windows)]
 fn acquire_instance()
@@ -45,8 +51,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "WINEBRIDGE_PORT_FILE is not set",
         )
     })?);
-    let incoming = TcpIncoming::bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
+    let blocking_transport = std::env::var_os(BLOCKING_TRANSPORT_ENV).is_some();
+    let incoming = Incoming::bind(SocketAddr::from(([127, 0, 0, 1], 0)), blocking_transport)?;
     let addr = incoming.local_addr()?;
+    if blocking_transport {
+        tracing::info!("Using the blocking transport (host Wine cannot poll sockets)");
+    }
 
     let (tx, rx) = oneshot::channel();
 
