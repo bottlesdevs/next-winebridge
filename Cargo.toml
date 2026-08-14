@@ -1,16 +1,15 @@
 [package]
 name = "bottles-winebridge"
+description = "A bridge between Bottles Next and Wine prefixes."
 version.workspace = true
-description.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
-repository.workspace = true
-homepage.workspace = true
-categories.workspace = true
-keywords.workspace = true
-exclude.workspace = true
-readme.workspace = true
+repository = "https://github.com/bottlesdevs/next-winebridge/"
+homepage = ""
+categories = [""]
+keywords = [""]
+exclude = [""]
 
 [dependencies]
 next-proto.workspace = true
