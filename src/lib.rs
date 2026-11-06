@@ -15,8 +15,8 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Result, Status};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
@@ -82,14 +82,14 @@ fn wineboot_args(value: i32) -> Result<&'static str, Status> {
 }
 
 pub struct WineBridgeService {
-    /// Becomes `true` when shutdown is requested. The server stops on it, and
+    /// Cancelled when shutdown is requested. The server stops on it, and
     /// group watch streams end on it so the server's in-flight requests finish.
-    shutdown: watch::Sender<bool>,
+    shutdown: CancellationToken,
     processes: Arc<ProcessManager>,
 }
 
 impl WineBridgeService {
-    pub fn new(shutdown: watch::Sender<bool>, processes: Arc<ProcessManager>) -> Self {
+    pub fn new(shutdown: CancellationToken, processes: Arc<ProcessManager>) -> Self {
         Self {
             shutdown,
             processes,
@@ -118,12 +118,9 @@ impl WineBridge for WineBridgeService {
         &self,
         _request: Request<()>,
     ) -> Result<Response<Self::WatchGroupsStream>> {
-        let mut shutdown = self.shutdown.subscribe();
         let groups = WatchStream::new(self.processes.subscribe())
             .map(Ok)
-            .take_until(async move {
-                let _ = shutdown.wait_for(|requested| *requested).await;
-            });
+            .take_until(self.shutdown.clone().cancelled_owned());
         Ok(Response::new(Box::pin(groups)))
     }
 
@@ -454,7 +451,7 @@ impl WineBridge for WineBridgeService {
     // --- System ---
 
     async fn shutdown(&self, _request: Request<()>) -> Result<Response<()>> {
-        self.shutdown.send_replace(true);
+        self.shutdown.cancel();
         Ok(Response::new(()))
     }
 
