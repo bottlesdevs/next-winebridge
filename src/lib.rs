@@ -7,7 +7,7 @@ mod status;
 use dll_overrides::manager::DllOverrideManager;
 use futures_util::{Stream, StreamExt};
 use next_proto::winebridge::{self, wine_bridge_server::WineBridge};
-use processes::manager::ProcessManager;
+pub use processes::manager::{ProcessManager, process_events};
 use registry::operations;
 use services::manager::ServiceManager;
 use std::ffi::OsString;
@@ -89,11 +89,11 @@ pub struct WineBridgeService {
 }
 
 impl WineBridgeService {
-    pub fn new(shutdown: watch::Sender<bool>) -> windows::core::Result<Self> {
-        Ok(Self {
+    pub fn new(shutdown: watch::Sender<bool>, processes: Arc<ProcessManager>) -> Self {
+        Self {
             shutdown,
-            processes: ProcessManager::new()?,
-        })
+            processes,
+        }
     }
 }
 

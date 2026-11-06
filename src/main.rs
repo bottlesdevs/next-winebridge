@@ -1,6 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use bottles_winebridge::WineBridgeService;
+use bottles_winebridge::{ProcessManager, WineBridgeService, process_events};
 use next_proto::winebridge::wine_bridge_server::WineBridgeServer;
 use std::{fs, io, net::SocketAddr, path::PathBuf};
 use tokio::sync::watch;
@@ -50,7 +50,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (shutdown, mut requested) = watch::channel(false);
 
-    let service = WineBridgeService::new(shutdown)?;
+    let processes = ProcessManager::new()?;
+    std::thread::Builder::new()
+        .name("process-events".into())
+        .spawn({
+            let processes = processes.clone();
+            move || process_events(processes)
+        })?;
+    let service = WineBridgeService::new(shutdown, processes);
     let (health_reporter, health_service) = health_reporter();
     health_reporter
         .set_serving::<WineBridgeServer<WineBridgeService>>()
