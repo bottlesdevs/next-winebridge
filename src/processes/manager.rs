@@ -69,16 +69,19 @@ impl Group {
 
     /// Returns the IDs of the group's running processes.
     fn pids(&self) -> Result<HashSet<u32>, Error> {
-        // The list header shares its first slot with the first ID.
-        let mut slots = 1;
+        let mut count: usize = 1;
         loop {
-            let mut buffer = vec![0usize; slots + 1];
+            // The struct already holds one ID; each further ID adds one `usize`.
+            let bytes = size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>()
+                + count.saturating_sub(1) * size_of::<usize>();
+            // A `usize` buffer keeps the list aligned.
+            let mut buffer = vec![0usize; bytes.div_ceil(size_of::<usize>())];
             let result = unsafe {
                 QueryInformationJobObject(
                     Some(self.0),
                     JobObjectBasicProcessIdList,
                     buffer.as_mut_ptr() as *mut c_void,
-                    (buffer.len() * size_of::<usize>()) as u32,
+                    bytes as u32,
                     None,
                 )
             };
@@ -94,7 +97,7 @@ impl Group {
                     return Ok(ids.iter().map(|&id| id as u32).collect());
                 }
                 Err(error) if error.code() == ERROR_MORE_DATA.to_hresult() => {
-                    slots = list.NumberOfAssignedProcesses as usize;
+                    count = list.NumberOfAssignedProcesses as usize;
                 }
                 Err(error) => return Err(error),
             }
