@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, rx) = oneshot::channel();
 
-    let service = WineBridgeService::new(tx);
+    let service = WineBridgeService::new(tx)?;
     let (health_reporter, health_service) = health_reporter();
     health_reporter
         .set_serving::<WineBridgeServer<WineBridgeService>>()

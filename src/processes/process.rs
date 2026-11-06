@@ -50,6 +50,15 @@ impl Process {
     pub fn thread_count(&self) -> u32 {
         self.0.cntThreads
     }
+
+    pub fn to_proto(&self, group: Option<String>) -> next_proto::winebridge::Process {
+        next_proto::winebridge::Process {
+            name: self.name(),
+            pid: self.pid(),
+            threads: self.thread_count(),
+            group,
+        }
+    }
 }
 
 pub struct ProcessSnapshot {
