@@ -5,6 +5,7 @@ mod services;
 mod status;
 
 use dll_overrides::manager::DllOverrideManager;
+use futures_util::{Stream, StreamExt};
 use next_proto::winebridge::{self, wine_bridge_server::WineBridge};
 use processes::manager::ProcessManager;
 use registry::operations;
@@ -12,7 +13,10 @@ use services::manager::ServiceManager;
 use std::ffi::OsString;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
-use tokio::sync::{Mutex, oneshot};
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio::sync::{Mutex, oneshot, watch};
+use tokio_stream::wrappers::WatchStream;
 use tonic::{Request, Response, Result, Status};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
@@ -79,13 +83,19 @@ fn wineboot_args(value: i32) -> Result<&'static str, Status> {
 
 pub struct WineBridgeService {
     shutdown_signal: Mutex<Option<oneshot::Sender<()>>>,
+    /// Becomes `true` when shutdown starts, ending process watch streams so the
+    /// server can finish its in-flight requests.
+    stopping: watch::Sender<bool>,
+    processes: Arc<ProcessManager>,
 }
 
 impl WineBridgeService {
-    pub fn new(shutdown_signal: oneshot::Sender<()>) -> Self {
-        Self {
+    pub fn new(shutdown_signal: oneshot::Sender<()>) -> windows::core::Result<Self> {
+        Ok(Self {
             shutdown_signal: Mutex::new(Some(shutdown_signal)),
-        }
+            stopping: watch::channel(false).0,
+            processes: ProcessManager::new()?,
+        })
     }
 }
 
@@ -95,24 +105,28 @@ impl WineBridge for WineBridgeService {
 
     async fn list_processes(
         &self,
-        _request: Request<()>,
-    ) -> Result<Response<winebridge::ListProcessesResponse>> {
-        let processes = ProcessManager
-            .running_processes()
+        request: Request<winebridge::ListProcessesRequest>,
+    ) -> Result<Response<winebridge::ProcessList>> {
+        let list = self
+            .processes
+            .processes(request.get_ref().group.as_deref())
             .map_err(status::windows)?;
+        Ok(Response::new(list))
+    }
 
-        let processes = processes
-            .iter()
-            .map(|process| winebridge::Process {
-                name: process.name(),
-                pid: process.pid(),
-                threads: process.thread_count(),
-            })
-            .collect();
+    type WatchGroupsStream = Pin<Box<dyn Stream<Item = Result<winebridge::RunningGroups>> + Send>>;
 
-        Ok(Response::new(winebridge::ListProcessesResponse {
-            processes,
-        }))
+    async fn watch_groups(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<Self::WatchGroupsStream>> {
+        let mut stopping = self.stopping.subscribe();
+        let groups = WatchStream::new(self.processes.subscribe())
+            .map(Ok)
+            .take_until(async move {
+                let _ = stopping.wait_for(|stopping| *stopping).await;
+            });
+        Ok(Response::new(Box::pin(groups)))
     }
 
     async fn launch_process(
@@ -138,7 +152,7 @@ impl WineBridge for WineBridgeService {
             ));
         }
 
-        let pid = ProcessManager.execute(input).map_err(status::windows)?;
+        let pid = self.processes.execute(input).map_err(status::windows)?;
 
         Ok(Response::new(winebridge::LaunchProcessResponse { pid }))
     }
@@ -153,7 +167,7 @@ impl WineBridge for WineBridgeService {
                 "program id must be non-empty and contain no NUL bytes",
             ));
         }
-        ProcessManager.kill(id).map_err(status::windows)?;
+        self.processes.kill(id).map_err(status::windows)?;
 
         Ok(Response::new(()))
     }
@@ -442,6 +456,7 @@ impl WineBridge for WineBridgeService {
     // --- System ---
 
     async fn shutdown(&self, _request: Request<()>) -> Result<Response<()>> {
+        self.stopping.send_replace(true);
         if let Some(tx) = self.shutdown_signal.lock().await.take() {
             tx.send(())
                 .map_err(|_| Status::internal("Failed to send shutdown signal"))?;
