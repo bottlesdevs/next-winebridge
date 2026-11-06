@@ -3,7 +3,7 @@
 use bottles_winebridge::WineBridgeService;
 use next_proto::winebridge::wine_bridge_server::WineBridgeServer;
 use std::{fs, io, net::SocketAddr, path::PathBuf};
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tonic::transport::server::TcpIncoming;
 use tonic_health::server::health_reporter;
 use tracing_subscriber::EnvFilter;
@@ -48,9 +48,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let incoming = TcpIncoming::bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
     let addr = incoming.local_addr()?;
 
-    let (tx, rx) = oneshot::channel();
+    let (shutdown, mut requested) = watch::channel(false);
 
-    let service = WineBridgeService::new(tx)?;
+    let service = WineBridgeService::new(shutdown)?;
     let (health_reporter, health_service) = health_reporter();
     health_reporter
         .set_serving::<WineBridgeServer<WineBridgeService>>()
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(health_service)
         .add_service(WineBridgeServer::new(service))
         .serve_with_incoming_shutdown(incoming, async move {
-            let _ = rx.await;
+            let _ = requested.wait_for(|requested| *requested).await;
             health_reporter
                 .set_not_serving::<WineBridgeServer<WineBridgeService>>()
                 .await;
