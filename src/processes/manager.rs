@@ -139,13 +139,13 @@ pub struct ProcessManager {
 
 impl ProcessManager {
     /// Creates the completion port that [`process_events`] waits on.
-    pub fn new() -> Result<Arc<Self>, Error> {
+    pub fn new() -> Result<Self, Error> {
         let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1)? };
-        Ok(Arc::new(Self {
+        Ok(Self {
             port: CompletionPort(port),
             groups: Mutex::new(HashMap::new()),
             running: watch::channel(winebridge::RunningGroups::default()).0,
-        }))
+        })
     }
 
     /// Subscribes to the running groups, starting with the current ones.

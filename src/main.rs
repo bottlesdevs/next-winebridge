@@ -2,7 +2,7 @@
 
 use bottles_winebridge::{ProcessManager, WineBridgeService, process_events};
 use next_proto::winebridge::wine_bridge_server::WineBridgeServer;
-use std::{fs, io, net::SocketAddr, path::PathBuf};
+use std::{fs, io, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::watch;
 use tonic::transport::server::TcpIncoming;
 use tonic_health::server::health_reporter;
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (shutdown, mut requested) = watch::channel(false);
 
-    let processes = ProcessManager::new()?;
+    let processes = Arc::new(ProcessManager::new()?);
     std::thread::Builder::new()
         .name("process-events".into())
         .spawn({
