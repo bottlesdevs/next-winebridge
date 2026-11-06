@@ -15,7 +15,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::{Mutex, oneshot, watch};
+use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
 use tonic::{Request, Response, Result, Status};
 use windows::Win32::Foundation::CloseHandle;
@@ -82,18 +82,16 @@ fn wineboot_args(value: i32) -> Result<&'static str, Status> {
 }
 
 pub struct WineBridgeService {
-    shutdown_signal: Mutex<Option<oneshot::Sender<()>>>,
-    /// Becomes `true` when shutdown starts, ending process watch streams so the
-    /// server can finish its in-flight requests.
-    stopping: watch::Sender<bool>,
+    /// Becomes `true` when shutdown is requested. The server stops on it, and
+    /// group watch streams end on it so the server's in-flight requests finish.
+    shutdown: watch::Sender<bool>,
     processes: Arc<ProcessManager>,
 }
 
 impl WineBridgeService {
-    pub fn new(shutdown_signal: oneshot::Sender<()>) -> windows::core::Result<Self> {
+    pub fn new(shutdown: watch::Sender<bool>) -> windows::core::Result<Self> {
         Ok(Self {
-            shutdown_signal: Mutex::new(Some(shutdown_signal)),
-            stopping: watch::channel(false).0,
+            shutdown,
             processes: ProcessManager::new()?,
         })
     }
@@ -120,11 +118,11 @@ impl WineBridge for WineBridgeService {
         &self,
         _request: Request<()>,
     ) -> Result<Response<Self::WatchGroupsStream>> {
-        let mut stopping = self.stopping.subscribe();
+        let mut shutdown = self.shutdown.subscribe();
         let groups = WatchStream::new(self.processes.subscribe())
             .map(Ok)
             .take_until(async move {
-                let _ = stopping.wait_for(|stopping| *stopping).await;
+                let _ = shutdown.wait_for(|requested| *requested).await;
             });
         Ok(Response::new(Box::pin(groups)))
     }
@@ -456,12 +454,7 @@ impl WineBridge for WineBridgeService {
     // --- System ---
 
     async fn shutdown(&self, _request: Request<()>) -> Result<Response<()>> {
-        self.stopping.send_replace(true);
-        if let Some(tx) = self.shutdown_signal.lock().await.take() {
-            tx.send(())
-                .map_err(|_| Status::internal("Failed to send shutdown signal"))?;
-        }
-
+        self.shutdown.send_replace(true);
         Ok(Response::new(()))
     }
 
