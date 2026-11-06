@@ -120,15 +120,16 @@ impl Drop for Group {
 /// Receives a notification whenever a process in a launched group starts or exits.
 struct CompletionPort(HANDLE);
 
-// The port handle is only used to wait for events on the watcher thread.
+// The port handle is only used to wait for events in `process_events`.
 unsafe impl Send for CompletionPort {}
 unsafe impl Sync for CompletionPort {}
 
 /// Launches processes into groups and publishes which groups are running.
 ///
-/// Every group launched here reports to one completion port. A watcher thread
-/// republishes the running groups whenever a process in any of them starts or
-/// exits. Process details are read on request rather than published.
+/// Every group launched here reports to one completion port, and
+/// [`process_events`] republishes the running groups whenever a process in any
+/// of them starts or exits. Process details are read on request rather than
+/// published.
 pub struct ProcessManager {
     port: CompletionPort,
     /// Groups launched by this WineBridge, by group ID.
@@ -137,17 +138,14 @@ pub struct ProcessManager {
 }
 
 impl ProcessManager {
-    /// Creates the completion port and starts the thread that watches it.
+    /// Creates the completion port that [`process_events`] waits on.
     pub fn new() -> Result<Arc<Self>, Error> {
         let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1)? };
-        let manager = Arc::new(Self {
+        Ok(Arc::new(Self {
             port: CompletionPort(port),
             groups: Mutex::new(HashMap::new()),
             running: watch::channel(winebridge::RunningGroups::default()).0,
-        });
-        let watcher = manager.clone();
-        std::thread::spawn(move || watcher.watch());
-        Ok(manager)
+        }))
     }
 
     /// Subscribes to the running groups, starting with the current ones.
@@ -272,37 +270,6 @@ impl ProcessManager {
         }
     }
 
-    /// Republishes the running groups after every process event.
-    fn watch(&self) {
-        loop {
-            let (mut message, mut key) = (0, 0);
-            let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
-            let event = unsafe {
-                GetQueuedCompletionStatus(
-                    self.port.0,
-                    &mut message,
-                    &mut key,
-                    &mut overlapped,
-                    INFINITE,
-                )
-            };
-            if let Err(error) = event {
-                tracing::error!(%error, "process events are no longer received");
-                return;
-            }
-            match self.running_groups() {
-                Ok(running) => {
-                    self.running.send_if_modified(|current| {
-                        let changed = *current != running;
-                        *current = running;
-                        changed
-                    });
-                }
-                Err(error) => tracing::warn!(%error, "failed to list running groups"),
-            }
-        }
-    }
-
     /// Lists the launched groups that have a running process, sorted by ID.
     fn running_groups(&self) -> Result<winebridge::RunningGroups, Error> {
         let mut ids = Vec::new();
@@ -313,5 +280,39 @@ impl ProcessManager {
         }
         ids.sort();
         Ok(winebridge::RunningGroups { ids })
+    }
+}
+
+/// Republishes `manager`'s running groups after every process event.
+///
+/// Runs until the completion port fails, blocking the calling thread; run it on
+/// a thread of its own.
+pub fn process_events(manager: Arc<ProcessManager>) {
+    loop {
+        let (mut message, mut key) = (0, 0);
+        let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
+        let event = unsafe {
+            GetQueuedCompletionStatus(
+                manager.port.0,
+                &mut message,
+                &mut key,
+                &mut overlapped,
+                INFINITE,
+            )
+        };
+        if let Err(error) = event {
+            tracing::error!(%error, "process events are no longer received");
+            return;
+        }
+        match manager.running_groups() {
+            Ok(running) => {
+                manager.running.send_if_modified(|current| {
+                    let changed = *current != running;
+                    *current = running;
+                    changed
+                });
+            }
+            Err(error) => tracing::warn!(%error, "failed to list running groups"),
+        }
     }
 }
