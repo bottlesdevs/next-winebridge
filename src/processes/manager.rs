@@ -134,7 +134,8 @@ pub struct ProcessManager {
     port: CompletionPort,
     /// Groups launched by this WineBridge, by group ID.
     groups: Mutex<HashMap<String, Group>>,
-    running: watch::Sender<winebridge::RunningGroups>,
+    /// The running groups last published to subscribers.
+    published: watch::Sender<winebridge::RunningGroups>,
 }
 
 impl ProcessManager {
@@ -144,13 +145,13 @@ impl ProcessManager {
         Ok(Self {
             port: CompletionPort(port),
             groups: Mutex::new(HashMap::new()),
-            running: watch::channel(winebridge::RunningGroups::default()).0,
+            published: watch::channel(winebridge::RunningGroups::default()).0,
         })
     }
 
     /// Subscribes to the running groups, starting with the current ones.
     pub fn subscribe(&self) -> watch::Receiver<winebridge::RunningGroups> {
-        self.running.subscribe()
+        self.published.subscribe()
     }
 
     /// Lists the processes in group `id`, or every process when `id` is `None`.
@@ -306,7 +307,7 @@ pub fn process_events(manager: Arc<ProcessManager>) {
         }
         match manager.running_groups() {
             Ok(running) => {
-                manager.running.send_if_modified(|current| {
+                manager.published.send_if_modified(|current| {
                     let changed = *current != running;
                     *current = running;
                     changed
