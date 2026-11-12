@@ -73,9 +73,9 @@ fn wineboot_args(mode: winebridge::WinebootMode) -> Result<&'static str, Status>
         winebridge::WinebootMode::Unspecified => {
             Err(Status::invalid_argument("wineboot mode is required"))
         }
-        winebridge::WinebootMode::Normal => Ok("/r"),
-        winebridge::WinebootMode::Shutdown => Ok("/s"),
-        winebridge::WinebootMode::Kill => Ok("/k"),
+        winebridge::WinebootMode::Normal => Ok("--restart"),
+        winebridge::WinebootMode::Shutdown => Ok("--end-session --shutdown"),
+        winebridge::WinebootMode::Kill => Ok("--kill"),
     }
 }
 
@@ -581,7 +581,7 @@ mod tests {
         assert!(wineboot_args(winebridge::WinebootMode::Unspecified).is_err());
         assert_eq!(
             wineboot_args(winebridge::WinebootMode::Shutdown).unwrap(),
-            "/s"
+            "--end-session --shutdown"
         );
     }
 }
