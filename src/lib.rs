@@ -18,11 +18,10 @@ use std::sync::Arc;
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Result, Status};
-use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetLogicalDrives, GetVolumeInformationW,
 };
-use windows::Win32::System::Threading::{CREATE_NEW_CONSOLE, CreateProcessW, STARTUPINFOW};
+use windows::Win32::System::Threading::CREATE_NEW_CONSOLE;
 use windows::core::PCWSTR;
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -68,14 +67,14 @@ fn required(value: &str, field: &str) -> Result<(), Status> {
     }
 }
 
-fn wineboot_args(mode: winebridge::WinebootMode) -> Result<&'static str, Status> {
+fn wineboot_args(mode: winebridge::WinebootMode) -> Result<&'static [&'static str], Status> {
     match mode {
         winebridge::WinebootMode::Unspecified => {
             Err(Status::invalid_argument("wineboot mode is required"))
         }
-        winebridge::WinebootMode::Normal => Ok("--restart"),
-        winebridge::WinebootMode::Shutdown => Ok("--end-session --shutdown"),
-        winebridge::WinebootMode::Kill => Ok("--kill"),
+        winebridge::WinebootMode::Normal => Ok(&["--restart"]),
+        winebridge::WinebootMode::Shutdown => Ok(&["--end-session", "--shutdown"]),
+        winebridge::WinebootMode::Kill => Ok(&["--kill"]),
     }
 }
 
@@ -458,36 +457,15 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::WinebootRequest>,
     ) -> Result<Response<()>> {
         let args = wineboot_args(request.into_inner().mode())?;
-
-        let exe = to_wide("wineboot.exe");
-        let mut cmd = to_wide(&format!("wineboot.exe {}", args));
-        let startup_info = STARTUPINFOW {
-            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-            ..Default::default()
-        };
-        let mut process_info = windows::Win32::System::Threading::PROCESS_INFORMATION::default();
-
-        let result = unsafe {
-            CreateProcessW(
-                PCWSTR(exe.as_ptr()),
-                Some(windows::core::PWSTR(cmd.as_mut_ptr())),
-                None,
-                None,
-                false,
-                CREATE_NEW_CONSOLE,
-                None,
-                PCWSTR::null(),
-                &startup_info,
-                &mut process_info,
-            )
-        };
-
-        unsafe {
-            CloseHandle(process_info.hProcess).ok();
-            CloseHandle(process_info.hThread).ok();
+        let exit = tokio::process::Command::new("wineboot.exe")
+            .args(args)
+            .creation_flags(CREATE_NEW_CONSOLE.0)
+            .status()
+            .await
+            .map_err(status::io)?;
+        if !exit.success() {
+            return Err(Status::aborted(format!("wineboot exited with {exit}")));
         }
-
-        result.map_err(status::windows)?;
         Ok(Response::new(()))
     }
 
@@ -581,7 +559,7 @@ mod tests {
         assert!(wineboot_args(winebridge::WinebootMode::Unspecified).is_err());
         assert_eq!(
             wineboot_args(winebridge::WinebootMode::Shutdown).unwrap(),
-            "--end-session --shutdown"
+            ["--end-session", "--shutdown"]
         );
     }
 }
