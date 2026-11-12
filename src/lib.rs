@@ -68,10 +68,8 @@ fn required(value: &str, field: &str) -> Result<(), Status> {
     }
 }
 
-fn wineboot_args(value: i32) -> Result<&'static str, Status> {
-    match winebridge::WinebootMode::try_from(value)
-        .map_err(|_| Status::invalid_argument("invalid wineboot mode"))?
-    {
+fn wineboot_args(mode: winebridge::WinebootMode) -> Result<&'static str, Status> {
+    match mode {
         winebridge::WinebootMode::Unspecified => {
             Err(Status::invalid_argument("wineboot mode is required"))
         }
@@ -174,7 +172,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<()>> {
         let input = request.into_inner();
-        operations::create_key(input.hive, &input.subkey)?;
+        operations::create_key(input.hive(), &input.subkey)?;
         Ok(Response::new(()))
     }
 
@@ -183,7 +181,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryKeyRequest>,
     ) -> Result<Response<()>> {
         let input = request.into_inner();
-        operations::delete_tree(input.hive, &input.subkey)?;
+        operations::delete_tree(input.hive(), &input.subkey)?;
         Ok(Response::new(()))
     }
 
@@ -193,7 +191,7 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<winebridge::RegistryKey>> {
         let input = request.into_inner();
         Ok(Response::new(operations::get_key(
-            input.hive,
+            input.hive(),
             &input.subkey,
         )?))
     }
@@ -204,7 +202,7 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<winebridge::RegistryValue>> {
         let input = request.into_inner();
         Ok(Response::new(operations::get_value(
-            input.hive,
+            input.hive(),
             &input.subkey,
             &input.name,
         )?))
@@ -215,11 +213,12 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::SetRegistryValueRequest>,
     ) -> Result<Response<()>> {
         let input = request.into_inner();
+        let hive = input.hive();
         let value = input
             .value
             .and_then(|value| value.value)
             .ok_or_else(|| Status::invalid_argument("registry value is required"))?;
-        operations::set_value(input.hive, &input.subkey, &input.name, value)?;
+        operations::set_value(hive, &input.subkey, &input.name, value)?;
         Ok(Response::new(()))
     }
 
@@ -228,7 +227,7 @@ impl WineBridge for WineBridgeService {
         request: Request<winebridge::RegistryValueRequest>,
     ) -> Result<Response<()>> {
         let input = request.into_inner();
-        operations::delete_value(input.hive, &input.subkey, &input.name)?;
+        operations::delete_value(input.hive(), &input.subkey, &input.name)?;
         Ok(Response::new(()))
     }
 
@@ -380,7 +379,7 @@ impl WineBridge for WineBridgeService {
                 &input.name,
                 &input.display_name,
                 &input.binary_path,
-                services::start_type(input.start_type)?,
+                services::start_type(input.start_type())?,
             )
             .map_err(status::windows)?;
         Ok(Response::new(()))
@@ -427,8 +426,7 @@ impl WineBridge for WineBridgeService {
     ) -> Result<Response<()>> {
         let input = request.into_inner();
         required(&input.dll, "DLL name")?;
-        let mode = winebridge::DllOverrideMode::try_from(input.mode)
-            .map_err(|_| Status::invalid_argument("invalid DLL override mode"))?;
+        let mode = input.mode();
         if mode == winebridge::DllOverrideMode::Unspecified {
             return Err(Status::invalid_argument("DLL override mode is required"));
         }
@@ -459,7 +457,7 @@ impl WineBridge for WineBridgeService {
         &self,
         request: Request<winebridge::WinebootRequest>,
     ) -> Result<Response<()>> {
-        let args = wineboot_args(request.into_inner().mode)?;
+        let args = wineboot_args(request.into_inner().mode())?;
 
         let exe = to_wide("wineboot.exe");
         let mut cmd = to_wide(&format!("wineboot.exe {}", args));
@@ -580,11 +578,10 @@ mod tests {
 
     #[test]
     fn validates_wineboot_modes() {
-        assert!(wineboot_args(0).is_err());
+        assert!(wineboot_args(winebridge::WinebootMode::Unspecified).is_err());
         assert_eq!(
-            wineboot_args(winebridge::WinebootMode::Shutdown as i32).unwrap(),
+            wineboot_args(winebridge::WinebootMode::Shutdown).unwrap(),
             "/s"
         );
-        assert!(wineboot_args(i32::MAX).is_err());
     }
 }

@@ -6,17 +6,17 @@ use windows_registry::{
 
 use crate::status;
 
-pub fn create_key(hive: i32, subkey: &str) -> Result<(), Status> {
+pub fn create_key(hive: RegistryHive, subkey: &str) -> Result<(), Status> {
     let root = resolve_root(hive, subkey)?;
     root.create(subkey).map(drop).map_err(status::windows)
 }
 
-pub fn delete_tree(hive: i32, subkey: &str) -> Result<(), Status> {
+pub fn delete_tree(hive: RegistryHive, subkey: &str) -> Result<(), Status> {
     let root = resolve_root(hive, subkey)?;
     root.remove_tree(subkey).map_err(status::windows)
 }
 
-pub fn get_key(hive: i32, subkey: &str) -> Result<winebridge::RegistryKey, Status> {
+pub fn get_key(hive: RegistryHive, subkey: &str) -> Result<winebridge::RegistryKey, Status> {
     let root = resolve_root(hive, subkey)?;
     let key = root.open(subkey).map_err(status::windows)?;
     let values = key
@@ -31,13 +31,17 @@ pub fn get_key(hive: i32, subkey: &str) -> Result<winebridge::RegistryKey, Statu
         .collect::<Result<_, Status>>()?;
 
     Ok(winebridge::RegistryKey {
-        hive,
+        hive: hive as i32,
         subkey: subkey.to_string(),
         values,
     })
 }
 
-pub fn get_value(hive: i32, subkey: &str, name: &str) -> Result<winebridge::RegistryValue, Status> {
+pub fn get_value(
+    hive: RegistryHive,
+    subkey: &str,
+    name: &str,
+) -> Result<winebridge::RegistryValue, Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
     to_proto(
@@ -48,7 +52,12 @@ pub fn get_value(hive: i32, subkey: &str, name: &str) -> Result<winebridge::Regi
     )
 }
 
-pub fn set_value(hive: i32, subkey: &str, name: &str, value: ProtoValue) -> Result<(), Status> {
+pub fn set_value(
+    hive: RegistryHive,
+    subkey: &str,
+    name: &str,
+    value: ProtoValue,
+) -> Result<(), Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
     let key = root
@@ -87,7 +96,7 @@ pub fn set_value(hive: i32, subkey: &str, name: &str, value: ProtoValue) -> Resu
     .map_err(status::windows)
 }
 
-pub fn delete_value(hive: i32, subkey: &str, name: &str) -> Result<(), Status> {
+pub fn delete_value(hive: RegistryHive, subkey: &str, name: &str) -> Result<(), Status> {
     validate_name(name)?;
     let root = resolve_root(hive, subkey)?;
     root.options()
@@ -98,15 +107,13 @@ pub fn delete_value(hive: i32, subkey: &str, name: &str) -> Result<(), Status> {
         .map_err(status::windows)
 }
 
-fn resolve_root(hive: i32, subkey: &str) -> Result<&'static Key, Status> {
+fn resolve_root(hive: RegistryHive, subkey: &str) -> Result<&'static Key, Status> {
     if subkey.is_empty() || subkey.contains('\0') {
         return Err(Status::invalid_argument(
             "registry subkey must be non-empty and contain no NUL bytes",
         ));
     }
 
-    let hive = RegistryHive::try_from(hive)
-        .map_err(|_| Status::invalid_argument("invalid registry hive"))?;
     Ok(match hive {
         RegistryHive::ClassesRoot => CLASSES_ROOT,
         RegistryHive::CurrentConfig => CURRENT_CONFIG,
@@ -193,11 +200,13 @@ mod tests {
     #[test]
     fn rejects_invalid_registry_addresses() {
         assert_eq!(
-            resolve_root(0, TEST_SUBKEY).unwrap_err().code(),
+            resolve_root(RegistryHive::Unspecified, TEST_SUBKEY)
+                .unwrap_err()
+                .code(),
             Code::InvalidArgument
         );
         assert_eq!(
-            resolve_root(RegistryHive::CurrentUser as i32, "")
+            resolve_root(RegistryHive::CurrentUser, "")
                 .unwrap_err()
                 .code(),
             Code::InvalidArgument
@@ -239,7 +248,7 @@ mod tests {
     #[test]
     fn registry_crud_round_trips_supported_values() {
         let _ = CURRENT_USER.remove_tree(TEST_SUBKEY);
-        create_key(RegistryHive::CurrentUser as i32, TEST_SUBKEY).unwrap();
+        create_key(RegistryHive::CurrentUser, TEST_SUBKEY).unwrap();
 
         let values = [
             ("", ProtoValue::None(vec![1, 2])),
@@ -257,15 +266,9 @@ mod tests {
         ];
 
         for (name, value) in &values {
-            set_value(
-                RegistryHive::CurrentUser as i32,
-                TEST_SUBKEY,
-                name,
-                value.clone(),
-            )
-            .unwrap();
+            set_value(RegistryHive::CurrentUser, TEST_SUBKEY, name, value.clone()).unwrap();
             assert_eq!(
-                get_value(RegistryHive::CurrentUser as i32, TEST_SUBKEY, name)
+                get_value(RegistryHive::CurrentUser, TEST_SUBKEY, name)
                     .unwrap()
                     .value,
                 Some(value.clone())
@@ -273,19 +276,15 @@ mod tests {
         }
 
         assert_eq!(
-            get_key(RegistryHive::CurrentUser as i32, TEST_SUBKEY)
+            get_key(RegistryHive::CurrentUser, TEST_SUBKEY)
                 .unwrap()
                 .values
                 .len(),
             values.len()
         );
-        delete_value(RegistryHive::CurrentUser as i32, TEST_SUBKEY, "").unwrap();
-        create_key(
-            RegistryHive::CurrentUser as i32,
-            &format!("{TEST_SUBKEY}\\Child"),
-        )
-        .unwrap();
-        delete_tree(RegistryHive::CurrentUser as i32, TEST_SUBKEY).unwrap();
+        delete_value(RegistryHive::CurrentUser, TEST_SUBKEY, "").unwrap();
+        create_key(RegistryHive::CurrentUser, &format!("{TEST_SUBKEY}\\Child")).unwrap();
+        delete_tree(RegistryHive::CurrentUser, TEST_SUBKEY).unwrap();
         assert!(CURRENT_USER.open(TEST_SUBKEY).is_err());
     }
 }

@@ -39,10 +39,8 @@ pub fn to_proto(service: manager::ServiceInfo) -> Result<winebridge::Service, St
     })
 }
 
-pub fn start_type(value: i32) -> Result<u32, Status> {
-    match winebridge::ServiceStartType::try_from(value)
-        .map_err(|_| Status::invalid_argument("invalid service start type"))?
-    {
+pub fn start_type(value: winebridge::ServiceStartType) -> Result<u32, Status> {
+    match value {
         winebridge::ServiceStartType::ServiceStartUnspecified => {
             Err(Status::invalid_argument("service start type is required"))
         }
@@ -73,6 +71,6 @@ mod tests {
             service.start_type(),
             winebridge::ServiceStartType::ServiceAutoStart
         );
-        assert!(start_type(0).is_err());
+        assert!(start_type(winebridge::ServiceStartType::ServiceStartUnspecified).is_err());
     }
 }
